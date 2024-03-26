@@ -168,6 +168,7 @@ frame_t *loadframe(char *imgfile) {
 #define BITMAPSIZE   (LEDSTOTAL * 3)
 #define BUFSIZE 1024
 
+/*
 int animate(frame_t *frame) {
     int sockfd, portno, n;
     int serverlen;
@@ -230,19 +231,15 @@ int animate(frame_t *frame) {
     }
 
 }
+*/
 
 
 //
 // midi management
 //
-
-
-
 int univers_commit(char *univers, size_t unilen) {
     int fd;
     struct sockaddr_un addr;
-
-    return 0;
 
     if((fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
         diep("socket");
@@ -283,7 +280,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     // bank left : note 25
     // bank right: note 26
 
-    int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
+    unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
 
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
         // printf("noteon, note: %d", ev->data.note.note);
@@ -327,6 +324,16 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     return 0; // univers_commit(univers, unilen);
 }
 
+void netsend_transform_apply(kntxt_t *kntxt) {
+    float master = kntxt->midi.master / 255.0;
+
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        kntxt->pixels[i].r = (uint8_t) (kntxt->pixels[i].r * master);
+        kntxt->pixels[i].g = (uint8_t) (kntxt->pixels[i].g * master);
+        kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
+    }
+}
+
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     frame_t *frame = loadframe("/home/maxux/git/stageled/templates/debug.png");
@@ -349,6 +356,8 @@ void *thread_netsend(void *extra) {
             map[(a * 3) + 2] = target.b;
             */
         }
+
+        netsend_transform_apply(kntxt);
 
         usleep(50000);
 
@@ -458,7 +467,7 @@ void *thread_console(void *extra) {
             printf("% 4d ", kntxt->midi.channels[i].slider);
 
         printf("\n\n");
-        printf("Master: % 4d\n", kntxt->midi.master);
+        printf("Master: % 4d -- %f\n", kntxt->midi.master);
 
         usleep(10000);
     }
