@@ -43,14 +43,26 @@ typedef struct transform_t {
 
 } transform_t;
 
+typedef struct frame_t {
+    uint32_t *pixels;
+    int width;
+    int height;
+    size_t length;
+
+} frame_t;
+
 typedef struct kntxt_t {
     uint64_t stats_frames;
     pixel_t *pixels;
+    frame_t *frame;
     uint8_t *bitmap;
     transform_t midi;
+    char *presets[8];
+    pthread_mutex_t lock;
+
+    char blackout;
 
 } kntxt_t;
-
 
 //
 // helpers
@@ -78,14 +90,6 @@ void *imgerr(char *str) {
 //
 // image management
 //
-typedef struct frame_t {
-    uint32_t *pixels;
-    int width;
-    int height;
-    size_t length;
-
-} frame_t;
-
 frame_t *loadframe(char *imgfile) {
     FILE *fp;
     png_structp ctx;
@@ -237,30 +241,6 @@ int animate(frame_t *frame) {
 //
 // midi management
 //
-int univers_commit(char *univers, size_t unilen) {
-    int fd;
-    struct sockaddr_un addr;
-
-    if((fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
-        diep("socket");
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, "/tmp/dmx.sock");
-
-    if(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-        diep("connect");
-
-    printf("[+] network: sending univers frame\n");
-
-    if(send(fd, univers, unilen, 0) < 0)
-        diep("send");
-
-    close(fd);
-
-    return 0;
-}
-
 int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     // printf("[+] type: %d, ", ev->type);
 
@@ -281,9 +261,39 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     // bank right: note 26
 
     unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
+    unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
 
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
         // printf("noteon, note: %d", ev->data.note.note);
+
+        for(int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
+            if(presets[i] == ev->data.note.note) {
+                printf("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
+                printf("\033[K\n");
+
+                frame_t *frame = loadframe(kntxt->presets[i]);
+
+                pthread_mutex_lock(&kntxt->lock);
+                kntxt->frame = frame;
+                pthread_mutex_unlock(&kntxt->lock);
+
+                // FIXME: cleanup, concurrence...
+
+                return 0;
+            }
+        }
+
+        if(ev->data.note.note == 27) {
+            if(kntxt->blackout) {
+                kntxt->blackout = 0;
+                return 0;
+            }
+
+            if(kntxt->blackout == 0) {
+                kntxt->blackout = 1;
+                return 0;
+            }
+        }
     }
 
     if(ev->type == SND_SEQ_EVENT_NOTEOFF) {
@@ -321,26 +331,75 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
     // printf("\n");
 
-    return 0; // univers_commit(univers, unilen);
+    return 0;
+}
+
+int netsend_transmit_frame(kntxt_t *kntxt) {
+    struct sockaddr_in serveraddr;
+
+    char *hostname = "10.241.0.133";
+    int portno = 1111;
+
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sockfd < 0)
+        diep("socket");
+
+    struct hostent *server = gethostbyname(hostname);
+    if(server == NULL) {
+        fprintf(stderr, "ERROR, no such host as %s\n", hostname);
+        exit(0);
+    }
+
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+
+    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(portno);
+
+    int serverlen = sizeof(serveraddr);
+    int line = 0;
+
+    int n = sendto(sockfd, kntxt->bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
+    if (n < 0)
+      diep("sendto");
+
+    close(sockfd);
+
+    return 0;
 }
 
 void netsend_transform_apply(kntxt_t *kntxt) {
     float master = kntxt->midi.master / 255.0;
+
+    if(kntxt->blackout)
+        master = 0;
 
     for(int i = 0; i < LEDSTOTAL; i++) {
         kntxt->pixels[i].r = (uint8_t) (kntxt->pixels[i].r * master);
         kntxt->pixels[i].g = (uint8_t) (kntxt->pixels[i].g * master);
         kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
     }
+
+    // building network frame bitmap
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        kntxt->bitmap[(i * 3) + 0] = kntxt->pixels[i].r;
+        kntxt->bitmap[(i * 3) + 1] = kntxt->pixels[i].g;
+        kntxt->bitmap[(i * 3) + 2] = kntxt->pixels[i].b;
+    }
 }
 
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    frame_t *frame = loadframe("/home/maxux/git/stageled/templates/debug.png");
+    kntxt->frame = loadframe(kntxt->presets[0]);
 
     int line = 0;
 
     while(1) {
+        // link frame to main frame
+        frame_t *frame = kntxt->frame;
+
+        pthread_mutex_lock(&kntxt->lock);
+
         for(int a = 0; a < LEDSTOTAL; a++) {
             pixel_t target = {
                 .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
@@ -350,14 +409,12 @@ void *thread_netsend(void *extra) {
 
             kntxt->pixels[a] = target;
 
-            /*
-            map[(a * 3) + 0] = target.r;
-            map[(a * 3) + 1] = target.g;
-            map[(a * 3) + 2] = target.b;
-            */
         }
 
         netsend_transform_apply(kntxt);
+        netsend_transmit_frame(kntxt);
+
+        pthread_mutex_unlock(&kntxt->lock);
 
         usleep(50000);
 
@@ -437,12 +494,14 @@ void *thread_console(void *extra) {
     printf("\033[2J"); // clean entire screen
 
     while(1) {
+        pthread_mutex_lock(&kntxt->lock);
+
         // printf("\033[2J"); // clean entire screen
         printf("\033[H"); // cursor to home
 
         for(int line = 0; line < SEGMENTS; line++) {
             for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
-                int index = (line * SEGMENTS) + pixel;
+                int index = (line * PERSEGMENT) + pixel;
                 pixel_t *color = &kntxt->pixels[index];
 
                 printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
@@ -469,6 +528,8 @@ void *thread_console(void *extra) {
         printf("\n\n");
         printf("Master: % 4d -- %f\n", kntxt->midi.master);
 
+        pthread_mutex_unlock(&kntxt->lock);
+
         usleep(10000);
     }
 
@@ -490,6 +551,17 @@ int main(int argc, char *argv[]) {
 
     memset(&mainctx.midi, 0x00, sizeof(transform_t));
     mainctx.midi.lines = 8; // 8 channels
+
+    mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
+    mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
+    mainctx.presets[2] = "/home/maxux/git/stageled/templates/linear-solid.png";
+    mainctx.presets[3] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[4] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[5] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[6] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[7] = "/home/maxux/git/stageled/templates/black.png";
+
+    pthread_mutex_init(&mainctx.lock, NULL);
 
     printf("[+] starting network dispatcher thread\n");
     if(pthread_create(&netsend, NULL, thread_netsend, kntxt))
