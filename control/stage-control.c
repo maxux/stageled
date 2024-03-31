@@ -58,6 +58,7 @@ typedef struct kntxt_t {
     uint8_t *bitmap;
     transform_t midi;
     char *presets[8];
+    useconds_t speed;
     pthread_mutex_t lock;
 
     char blackout;
@@ -379,6 +380,14 @@ void netsend_transform_apply(kntxt_t *kntxt) {
         kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
     }
 
+    if(kntxt->midi.channels[7].slider > 0) {
+        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
+
+    } else {
+        kntxt->speed = 50000;
+
+    }
+
     // building network frame bitmap
     for(int i = 0; i < LEDSTOTAL; i++) {
         kntxt->bitmap[(i * 3) + 0] = kntxt->pixels[i].r;
@@ -415,7 +424,7 @@ void *thread_netsend(void *extra) {
 
         pthread_mutex_unlock(&kntxt->lock);
 
-        usleep(50000);
+        usleep(kntxt->speed);
 
         line += 1;
         if(line >= frame->height)
@@ -552,6 +561,7 @@ int main(int argc, char *argv[]) {
 
     memset(&mainctx.midi, 0x00, sizeof(transform_t));
     mainctx.midi.lines = 8; // 8 channels
+    mainctx.speed = 50000;
 
     mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
