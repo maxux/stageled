@@ -266,7 +266,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
         // printf("noteon, note: %d", ev->data.note.note);
 
-        for(int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
+        for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
             if(presets[i] == ev->data.note.note) {
                 printf("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
                 printf("\033[K\n");
@@ -301,7 +301,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     }
 
     if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
-        for(int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
+        for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
             if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
                 if(ev->data.control.param == limlow[i])
                     kntxt->midi.channels[i].high = ev->data.control.value * 2;
@@ -357,7 +357,6 @@ int netsend_transmit_frame(kntxt_t *kntxt) {
     serveraddr.sin_port = htons(portno);
 
     int serverlen = sizeof(serveraddr);
-    int line = 0;
 
     int n = sendto(sockfd, kntxt->bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
     if (n < 0)
@@ -428,7 +427,7 @@ void *thread_netsend(void *extra) {
 }
 
 void *thread_feedback(void *extra) {
-
+    (void) extra;
     return NULL;
 }
 
@@ -526,7 +525,7 @@ void *thread_console(void *extra) {
             printf("% 4d ", kntxt->midi.channels[i].slider);
 
         printf("\n\n");
-        printf("Master: % 4d -- %f\n", kntxt->midi.master);
+        printf("Master: % 4d\n", kntxt->midi.master);
 
         pthread_mutex_unlock(&kntxt->lock);
 
@@ -537,6 +536,8 @@ void *thread_console(void *extra) {
 }
 
 int main(int argc, char *argv[]) {
+    (void) argc;
+    (void) argv;
     printf("[+] initializing stage-led controle interface\n");
     pthread_t netsend, feedback, midi, console;
     kntxt_t mainctx = {
@@ -555,9 +556,9 @@ int main(int argc, char *argv[]) {
     mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
     mainctx.presets[2] = "/home/maxux/git/stageled/templates/linear-solid.png";
-    mainctx.presets[3] = "/home/maxux/git/stageled/templates/black.png";
-    mainctx.presets[4] = "/home/maxux/git/stageled/templates/black.png";
-    mainctx.presets[5] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
+    mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
+    mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
     mainctx.presets[6] = "/home/maxux/git/stageled/templates/black.png";
     mainctx.presets[7] = "/home/maxux/git/stageled/templates/black.png";
 
