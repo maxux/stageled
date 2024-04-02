@@ -51,6 +51,16 @@ typedef struct frame_t {
 
 } frame_t;
 
+typedef struct server_stats_t {
+    uint64_t state;
+    uint64_t old_frames;
+    uint64_t frames;
+    uint64_t fps;
+    uint64_t time_last_frame;
+    uint64_t time_current;
+
+} server_stats_t;
+
 typedef struct kntxt_t {
     uint64_t stats_frames;
     pixel_t *pixels;
@@ -59,6 +69,7 @@ typedef struct kntxt_t {
     transform_t midi;
     char *presets[8];
     useconds_t speed;
+    server_stats_t status;
     pthread_mutex_t lock;
 
     char blackout;
@@ -238,10 +249,85 @@ int animate(frame_t *frame) {
 }
 */
 
+//
+// network frame transmiter
+//
+void animate_transform_apply(kntxt_t *kntxt) {
+    double master = kntxt->midi.master / 255.0;
+
+    if(kntxt->blackout)
+        master = 0;
+
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        kntxt->pixels[i].r = (uint8_t) (kntxt->pixels[i].r * master);
+        kntxt->pixels[i].g = (uint8_t) (kntxt->pixels[i].g * master);
+        kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
+    }
+
+    if(kntxt->midi.channels[7].slider > 0) {
+        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
+
+    } else {
+        kntxt->speed = 50000;
+    }
+
+    // building network frame bitmap
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        kntxt->bitmap[(i * 3) + 0] = kntxt->pixels[i].r;
+        kntxt->bitmap[(i * 3) + 1] = kntxt->pixels[i].g;
+        kntxt->bitmap[(i * 3) + 2] = kntxt->pixels[i].b;
+    }
+}
+
+void *thread_animate(void *extra) {
+    kntxt_t *kntxt = (kntxt_t *) extra;
+    kntxt->frame = loadframe(kntxt->presets[0]);
+
+    int line = 0;
+
+    while(1) {
+        pthread_mutex_lock(&kntxt->lock);
+
+        // link frame to main frame
+        frame_t *frame = kntxt->frame;
+
+        for(int a = 0; a < LEDSTOTAL; a++) {
+            pixel_t target = {
+                .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
+                .g = (frame->pixels[(line * frame->width) + a] & 0x00ff00) >> 8,
+                .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
+            };
+
+            kntxt->pixels[a] = target;
+        }
+
+        animate_transform_apply(kntxt);
+        useconds_t waiting = kntxt->speed;
+
+        pthread_mutex_unlock(&kntxt->lock);
+
+        usleep(waiting);
+
+        line += 1;
+        if(line >= frame->height)
+            line = 0;
+    }
+
+    return NULL;
+}
 
 //
 // midi management
 //
+inline uint8_t midi_value_parser(uint8_t input) {
+    uint8_t parsed = input * 2;
+
+    if(input == 127)
+        return 255;
+
+    return parsed;
+}
+
 int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     // printf("[+] type: %d, ", ev->type);
 
@@ -264,6 +350,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
     unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
 
+
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
         // printf("noteon, note: %d", ev->data.note.note);
 
@@ -272,10 +359,11 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
                 printf("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
                 printf("\033[K\n");
 
-                frame_t *frame = loadframe(kntxt->presets[i]);
-
                 pthread_mutex_lock(&kntxt->lock);
+
+                frame_t *frame = loadframe(kntxt->presets[i]);
                 kntxt->frame = frame;
+
                 pthread_mutex_unlock(&kntxt->lock);
 
                 // FIXME: cleanup, concurrence...
@@ -284,17 +372,14 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
             }
         }
 
-        if(ev->data.note.note == 27) {
-            if(kntxt->blackout) {
-                kntxt->blackout = 0;
-                return 0;
-            }
+        pthread_mutex_lock(&kntxt->lock);
 
-            if(kntxt->blackout == 0) {
-                kntxt->blackout = 1;
-                return 0;
-            }
+        if(ev->data.note.note == 27) {
+            kntxt->blackout = kntxt->blackout ? 0 : 1;
         }
+
+        pthread_mutex_unlock(&kntxt->lock);
+
     }
 
     if(ev->type == SND_SEQ_EVENT_NOTEOFF) {
@@ -302,24 +387,29 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     }
 
     if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
+        pthread_mutex_lock(&kntxt->lock);
+
         for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
             if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
                 if(ev->data.control.param == limlow[i])
-                    kntxt->midi.channels[i].high = ev->data.control.value * 2;
+                    kntxt->midi.channels[i].high = midi_value_parser(ev->data.control.value);
 
                 if(ev->data.control.param == limlow[i] + 1)
-                    kntxt->midi.channels[i].mid = ev->data.control.value * 2;
+                    kntxt->midi.channels[i].mid = midi_value_parser(ev->data.control.value);
 
                 if(ev->data.control.param == limlow[i] + 2)
-                    kntxt->midi.channels[i].low = ev->data.control.value * 2;
+                    kntxt->midi.channels[i].low = midi_value_parser(ev->data.control.value);
 
                 if(ev->data.control.param == limlow[i] + 3)
-                    kntxt->midi.channels[i].slider = ev->data.control.value * 2;
+                    kntxt->midi.channels[i].slider = midi_value_parser(ev->data.control.value);
+
             }
 
             if(ev->data.control.param == 62)
-                kntxt->midi.master = ev->data.control.value * 2;
+                kntxt->midi.master = midi_value_parser(ev->data.control.value);
         }
+
+        pthread_mutex_unlock(&kntxt->lock);
 
         // printf("controller, param: %d, value: %d", ev->data.control.param, ev->data.control.value);
 
@@ -329,6 +419,12 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
         */
 
     }
+
+    pthread_mutex_lock(&kntxt->lock);
+
+    // animate_transform_apply(kntxt);
+
+    pthread_mutex_unlock(&kntxt->lock);
 
     // printf("\n");
 
@@ -368,75 +464,66 @@ int netsend_transmit_frame(kntxt_t *kntxt) {
     return 0;
 }
 
-void netsend_transform_apply(kntxt_t *kntxt) {
-    float master = kntxt->midi.master / 255.0;
-
-    if(kntxt->blackout)
-        master = 0;
-
-    for(int i = 0; i < LEDSTOTAL; i++) {
-        kntxt->pixels[i].r = (uint8_t) (kntxt->pixels[i].r * master);
-        kntxt->pixels[i].g = (uint8_t) (kntxt->pixels[i].g * master);
-        kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
-    }
-
-    if(kntxt->midi.channels[7].slider > 0) {
-        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
-
-    } else {
-        kntxt->speed = 50000;
-
-    }
-
-    // building network frame bitmap
-    for(int i = 0; i < LEDSTOTAL; i++) {
-        kntxt->bitmap[(i * 3) + 0] = kntxt->pixels[i].r;
-        kntxt->bitmap[(i * 3) + 1] = kntxt->pixels[i].g;
-        kntxt->bitmap[(i * 3) + 2] = kntxt->pixels[i].b;
-    }
-}
-
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    kntxt->frame = loadframe(kntxt->presets[0]);
-
-    int line = 0;
 
     while(1) {
-        // link frame to main frame
-        frame_t *frame = kntxt->frame;
-
         pthread_mutex_lock(&kntxt->lock);
 
-        for(int a = 0; a < LEDSTOTAL; a++) {
-            pixel_t target = {
-                .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
-                .g = (frame->pixels[(line * frame->width) + a] & 0x00ff00) >> 8,
-                .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
-            };
-
-            kntxt->pixels[a] = target;
-
-        }
-
-        netsend_transform_apply(kntxt);
         netsend_transmit_frame(kntxt);
 
         pthread_mutex_unlock(&kntxt->lock);
 
-        usleep(kntxt->speed);
-
-        line += 1;
-        if(line >= frame->height)
-            line = 0;
+        usleep(50000);
     }
-
 
     return NULL;
 }
 
 void *thread_feedback(void *extra) {
-    (void) extra;
+    kntxt_t *kntxt = (kntxt_t *) extra;
+    char message[1024];
+    struct sockaddr_in name;
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sock < 0)
+        diep("feedback: socket");
+
+    bzero((char *) &name, sizeof(name));
+    name.sin_family = AF_INET;
+    name.sin_addr.s_addr = htonl(INADDR_ANY);
+    name.sin_port = htons(1111);
+
+    if(bind(sock, (struct sockaddr *) &name, sizeof(name)))
+        diep("feedback: bind");
+
+    while(1) {
+        int bytes = read(sock, message, sizeof(message));
+        if(bytes <= 0) {
+            usleep(10000);
+            continue;
+        }
+
+        pthread_mutex_lock(&kntxt->lock);
+
+        memcpy(&kntxt->status, message, bytes);
+
+        pthread_mutex_unlock(&kntxt->lock);
+
+        #if 0
+        if(bytes == 48) {
+            printf("State.......: %lu\n", stats.state);
+            printf("Old Frames..: %lu\n", stats.old_frames);
+            printf("Frames......: %lu\n", stats.frames);
+            printf("FPS.........: %lu\n", stats.fps);
+            printf("Time Last...: %lu\n", stats.time_last_frame);
+            printf("Time Now....: %lu\n", stats.time_current);
+        }
+        #endif
+    }
+
+    close(sock);
+
     return NULL;
 }
 
@@ -548,7 +635,7 @@ int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
     printf("[+] initializing stage-led controle interface\n");
-    pthread_t netsend, feedback, midi, console;
+    pthread_t netsend, feedback, midi, console, animate;
     kntxt_t mainctx = {
         .stats_frames = 0,
     };
@@ -569,8 +656,8 @@ int main(int argc, char *argv[]) {
     mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
     mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
     mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
-    mainctx.presets[6] = "/home/maxux/git/stageled/templates/black.png";
-    mainctx.presets[7] = "/home/maxux/git/stageled/templates/black.png";
+    mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
+    mainctx.presets[7] = "/home/maxux/git/stageled/templates/strobe.png";
 
     pthread_mutex_init(&mainctx.lock, NULL);
 
@@ -590,10 +677,15 @@ int main(int argc, char *argv[]) {
     if(pthread_create(&console, NULL, thread_console, kntxt))
         perror("thread: console");
 
+    printf("[+] starting animator thread\n");
+    if(pthread_create(&animate, NULL, thread_animate, kntxt))
+        perror("thread: animate");
+
     pthread_join(netsend, NULL);
     pthread_join(feedback, NULL);
     pthread_join(midi, NULL);
     pthread_join(console, NULL);
+    pthread_join(animate, NULL);
 
     return 0;
 }
