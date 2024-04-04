@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/time.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/poll.h>
@@ -22,6 +23,11 @@
 #define LEDSTOTAL   (SEGMENTS * PERSEGMENT)
 #define BITMAPSIZE  (LEDSTOTAL * 3)
 #define BUFSIZE     1024
+
+#define CRST        "\033[0m"
+#define CWAIT(x)    "\033[1;37;44m" x CRST
+#define COK(x)      "\033[1;37;42m" x CRST
+#define CBAD(x)     "\033[1;37;41m" x CRST
 
 //
 // global context
@@ -73,6 +79,7 @@ typedef struct control_stats_t {
     uint64_t frames;
     uint64_t ctrl_initial_frames;
     uint64_t ctrl_initial_time;
+    struct timeval ctrl_last_feedback;
 
 } control_stats_t;
 
@@ -130,6 +137,23 @@ void diea(char *str, int err) {
 void *imgerr(char *str) {
     fprintf(stderr, "image: %s\n", str);
     return NULL;
+}
+
+double timediff(struct timeval *n, struct timeval *b) {
+    return (double)(n->tv_usec - b->tv_usec) / 1000000 + (double)(n->tv_sec - b->tv_sec);
+}
+
+char *uptime_prettify(size_t usec) {
+    char buffer[128];
+    size_t source = usec / 1000;
+
+    int h = (source / 3600);
+    int m = (source - (3600 * h)) / 60;
+    int s = (source - (3600 * h) - (m * 60));
+
+    sprintf(buffer, "%02d hrs, %02d min, %02d sec", h, m, s);
+
+    return strdup(buffer);
 }
 
 //
@@ -510,10 +534,13 @@ void *thread_feedback(void *extra) {
 
             kntxt->client.ctrl_initial_frames = initial.frames;
             kntxt->client.ctrl_initial_time = initial.time_current;
+
+            logger("[+] feedback: relative frames: %lu, time: %lu", initial.frames, initial.time_current);
         }
 
         // make a lazy binary copy from controler
         memcpy(&kntxt->controler, message, bytes);
+        gettimeofday(&kntxt->client.ctrl_last_feedback, NULL);
 
         pthread_mutex_unlock(&kntxt->lock);
     }
@@ -631,6 +658,10 @@ void *thread_console(void *extra) {
     printf("\033[2J"); // clean entire screen
 
     while(1) {
+        // preparing relative timing
+        struct timeval now;
+        gettimeofday(&now, NULL);
+
         pthread_mutex_lock(&kntxt->lock);
 
         printf("\033[H"); // cursor to home
@@ -678,24 +709,57 @@ void *thread_console(void *extra) {
 
         console_print_line(" ");
         console_print_line("Master: % 4d", kntxt->midi.master);
-        console_print_line("Interface: %s", kntxt->interface ? "connected" : "not found");
+        console_print_line("%s", kntxt->interface ? COK(" interface online ") : CBAD(" interface offline "));
 
         console_border_bottom();
 
+        //
+        // controler and client statistics
+        //
         console_border_top("Statistics");
 
-        console_print_line("State.......: %lu ----", kntxt->controler.state);
-        console_print_line("Old Frames..: %lu ----", kntxt->controler.old_frames);
-        console_print_line("Frames......: %lu ----", kntxt->controler.frames);
-        console_print_line("FPS.........: %lu ----", kntxt->controler.fps);
-        console_print_line("Time Last...: %lu ----", kntxt->controler.time_last_frame);
-        console_print_line("Time Now....: %lu ----", kntxt->controler.time_current);
+        double lastping = timediff(&now, &kntxt->client.ctrl_last_feedback);
+
+        size_t showframes = kntxt->controler.frames - kntxt->client.ctrl_initial_frames;
+        size_t dropped = kntxt->client.frames - showframes;
+        float droprate = (dropped / (double) kntxt->client.frames) * 100;
+
+        char *sessup = uptime_prettify(kntxt->controler.time_current - kntxt->client.ctrl_initial_time);
+        char *ctrlup = uptime_prettify(kntxt->controler.time_current);
+
+        char *state = (kntxt->controler.state == 0) ? CWAIT(" waiting ") : COK(" online ");
+        if(kntxt->controler.state > 0 && lastping > 2.0)
+            state = CBAD(" timed out ");
+
+        console_print_line("Controler: %s", state);
+
+        if(kntxt->controler.state == 0) {
+            console_print_line("Last seen: %s", CWAIT(" waiting "));
+
+        } else {
+            console_print_line("Last seen: %.1f seconds ago", lastping);
+        }
+
+        console_print_line("");
+
+        console_print_line("Frames displayed: % 6lu [%2d fps]", showframes, kntxt->controler.fps);
+        console_print_line("Frames committed: %lu, dropped: %lu [%.1f%%]", kntxt->client.frames, dropped, droprate);
+
+        console_print_line("");
+        console_print_line("Controler uptime: %s", ctrlup);
+        console_print_line("Interface uptime: %s", sessup);
+
+        free(sessup);
+        free(ctrlup);
 
         console_border_bottom();
 
         // we are done with main context
         pthread_mutex_unlock(&kntxt->lock);
 
+        //
+        // last lines from logger (ring buffer)
+        //
         console_border_top("Logger");
         pthread_mutex_lock(&logs->lock);
 
@@ -773,7 +837,7 @@ int main(int argc, char *argv[]) {
     if(pthread_create(&netsend, NULL, thread_netsend, kntxt))
         perror("thread: netsend");
 
-    printf("[+] starting network feedback thread\n");
+    printf("[+] starting controler feedback thread\n");
     if(pthread_create(&feedback, NULL, thread_feedback, kntxt))
         perror("thread: feedback");
 
