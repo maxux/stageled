@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/poll.h>
@@ -15,7 +16,7 @@
 #include <png.h>
 #include <pthread.h>
 
-#define LOGGER_SIZE 8192
+#define LOGGER_SIZE 32
 
 //
 // global context
@@ -74,15 +75,23 @@ typedef struct kntxt_t {
     server_stats_t status;
     pthread_mutex_t lock;
     uint8_t interface;
-    char *logger;
 
     char blackout;
 
 } kntxt_t;
 
-kntxt_t mainctx = {
-    .stats_frames = 0,
-};
+
+typedef struct logger_t {
+    char **lines;
+    size_t capacity;
+    size_t current;
+    size_t nextid;
+
+    pthread_mutex_t lock;
+
+} logger_t;
+
+logger_t mainlog;
 
 //
 // helpers
@@ -111,14 +120,32 @@ void *imgerr(char *str) {
 // logging
 //
 void logger(char *fmt, ...) {
-    char buffer[1024];
+    char buffer[1024], timed[1096];
+    logger_t *logs = &mainlog;
 
     va_list va;
     va_start(va, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, va);
     va_end(va);
 
-    strcat(mainctx.logger, buffer);
+    // append local time
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+
+    sprintf(timed, "[%d:%d:%d] %s", tm->tm_hour, tm->tm_min, tm->tm_sec, buffer);
+
+    // locking logger and append log line
+    pthread_mutex_lock(&logs->lock);
+
+    if(logs->nextid == logs->capacity)
+        logs->nextid = 0;
+
+    free(logs->lines[logs->nextid]);
+    logs->lines[logs->nextid] = strdup(timed);
+
+    logs->nextid += 1;
+
+    pthread_mutex_unlock(&logs->lock);
 }
 
 //
@@ -700,7 +727,7 @@ void *thread_console(void *extra) {
 
         console_border_top("Logger");
 
-        printf("%s", kntxt->logger);
+        // printf("%s", kntxt->logger);
 
         console_border_bottom();
 
@@ -715,15 +742,26 @@ void *thread_console(void *extra) {
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
+
     printf("[+] initializing stage-led controle interface\n");
     pthread_t netsend, feedback, midi, console, animate;
+
+    // keep context local
+    kntxt_t mainctx = {
+        .stats_frames = 0,
+    };
+
+    // logger initializer
+    memset(&mainlog, 0x00, sizeof(logger_t));
+    pthread_mutex_init(&mainlog.lock, NULL);
+    mainlog.capacity = LOGGER_SIZE;
+    mainlog.lines = (char **) calloc(sizeof(char *), mainlog.capacity);
 
     // context initializer
     void *kntxt = &mainctx;
 
-    mainctx.pixels = calloc(sizeof(pixel_t), LEDSTOTAL);
-    mainctx.bitmap = calloc(sizeof(uint8_t), BITMAPSIZE);
-    mainctx.logger = calloc(sizeof(char), LOGGER_SIZE);
+    mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    mainctx.bitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
 
     memset(&mainctx.midi, 0x00, sizeof(transform_t));
     mainctx.midi.lines = 8; // 8 channels
