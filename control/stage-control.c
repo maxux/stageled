@@ -192,7 +192,7 @@ frame_t *loadframe(char *imgfile) {
     int width = png_get_image_width(ctx, info);
     int height = png_get_image_height(ctx, info);
 
-    logger("[+] image dimension: %d x %d px", width, height);
+    logger("[+] loader: image dimension: %d x %d px", width, height);
 
     png_bytep *lines = (png_bytep *) malloc(sizeof(png_bytep) * height);
     for(int y = 0; y < height; y++)
@@ -527,6 +527,8 @@ int netsend_transmit_frame(kntxt_t *kntxt) {
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
 
+    logger("[+] netsend: sending frames to controler");
+
     while(1) {
         pthread_mutex_lock(&kntxt->lock);
 
@@ -556,6 +558,8 @@ void *thread_feedback(void *extra) {
 
     if(bind(sock, (struct sockaddr *) &name, sizeof(name)))
         diep("feedback: bind");
+
+    logger("[+] feedback: waiting for incoming packets");
 
     while(1) {
         int bytes = read(sock, message, sizeof(message));
@@ -628,6 +632,7 @@ void *thread_midi(void *extra) {
     pfds = alloca(sizeof(*pfds) * npfds);
 
     kntxt->interface = 1;
+    logger("[+] midi: interface connected");
 
     // polling events
     while(1) {
@@ -671,12 +676,12 @@ void console_border_bottom() {
 }
 
 void console_print_line(char *fmt, ...) {
-    char buffer[1024], formatted[1096];
+    char buffer[1024];
 
     // build the string to print
     va_list va;
     va_start(va, fmt);
-    int printed = vsnprintf(buffer, sizeof(buffer), fmt, va);
+    vsnprintf(buffer, sizeof(buffer), fmt, va);
     va_end(va);
 
     // enclose the line into borders
@@ -770,8 +775,7 @@ void *thread_console(void *extra) {
             if(index < 0)
                 display = logs->capacity + index;
 
-            if(logs->lines[display] != NULL)
-                console_print_line("%s", logs->lines[display]);
+            console_print_line("%s", logs->lines[display] ? logs->lines[display] : "");
 
             index += 1;
         }
