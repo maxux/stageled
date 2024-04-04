@@ -54,7 +54,7 @@ typedef struct frame_t {
 
 } frame_t;
 
-typedef struct server_stats_t {
+typedef struct controler_stats_t {
     uint64_t state;
     uint64_t old_frames;
     uint64_t frames;
@@ -62,21 +62,31 @@ typedef struct server_stats_t {
     uint64_t time_last_frame;
     uint64_t time_current;
 
-} server_stats_t;
+} controler_stats_t;
+
+typedef struct control_stats_t {
+    uint64_t frames;
+
+} control_stats_t;
 
 typedef struct kntxt_t {
-    uint64_t stats_frames;
     pixel_t *pixels;
     frame_t *frame;
     uint8_t *bitmap;
     transform_t midi;
     char *presets[8];
     useconds_t speed;
-    server_stats_t status;
-    pthread_mutex_t lock;
+    char blackout;
+
+    // remote and local stats
+    controler_stats_t controler;
+    control_stats_t client;
+
+    // flags to monitor interface presence
     uint8_t interface;
 
-    char blackout;
+    // thread locking
+    pthread_mutex_t lock;
 
 } kntxt_t;
 
@@ -555,20 +565,10 @@ void *thread_feedback(void *extra) {
 
         pthread_mutex_lock(&kntxt->lock);
 
-        memcpy(&kntxt->status, message, bytes);
+        // make a lazy binary copy from controler
+        memcpy(&kntxt->controler, message, bytes);
 
         pthread_mutex_unlock(&kntxt->lock);
-
-        #if 0
-        if(bytes == 48) {
-            printf("State.......: %lu\n", stats.state);
-            printf("Old Frames..: %lu\n", stats.old_frames);
-            printf("Frames......: %lu\n", stats.frames);
-            printf("FPS.........: %lu\n", stats.fps);
-            printf("Time Last...: %lu\n", stats.time_last_frame);
-            printf("Time Now....: %lu\n", stats.time_current);
-        }
-        #endif
     }
 
     close(sock);
@@ -719,12 +719,12 @@ void *thread_console(void *extra) {
 
         console_border_top("MIDI Channels");
 
-        printf("State.......: %lu ----\n", kntxt->status.state);
-        printf("Old Frames..: %lu ----\n", kntxt->status.old_frames);
-        printf("Frames......: %lu ----\n", kntxt->status.frames);
-        printf("FPS.........: %lu ----\n", kntxt->status.fps);
-        printf("Time Last...: %lu ----\n", kntxt->status.time_last_frame);
-        printf("Time Now....: %lu ----\n", kntxt->status.time_current);
+        printf("State.......: %lu ----\n", kntxt->controler.state);
+        printf("Old Frames..: %lu ----\n", kntxt->controler.old_frames);
+        printf("Frames......: %lu ----\n", kntxt->controler.frames);
+        printf("FPS.........: %lu ----\n", kntxt->controler.fps);
+        printf("Time Last...: %lu ----\n", kntxt->controler.time_last_frame);
+        printf("Time Now....: %lu ----\n", kntxt->controler.time_current);
 
         console_border_bottom();
 
@@ -761,9 +761,7 @@ int main(int argc, char *argv[]) {
     pthread_t netsend, feedback, midi, console, animate;
 
     // keep context local
-    kntxt_t mainctx = {
-        .stats_frames = 0,
-    };
+    kntxt_t mainctx;
 
     // logger initializer
     memset(&mainlog, 0x00, sizeof(logger_t));
