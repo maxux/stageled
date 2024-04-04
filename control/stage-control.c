@@ -660,6 +660,9 @@ void console_border_bottom() {
 void *thread_console(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
 
+    // printf("[+] preparing console for monitoring\n");
+    // usleep(5000000);
+
     printf("\033[2J"); // clean entire screen
 
     while(1) {
@@ -739,6 +742,17 @@ void *thread_console(void *extra) {
     return NULL;
 }
 
+void cleanup(kntxt_t *kntxt) {
+    // master cleaner to check memory sanity (with, eg. valgrind)
+    free(kntxt->pixels);
+    free(kntxt->bitmap);
+
+    for(int i = 0; i < LOGGER_SIZE; i++)
+        free(mainlog.lines[i]);
+
+    free(mainlog.lines);
+}
+
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
@@ -794,7 +808,8 @@ int main(int argc, char *argv[]) {
     if(pthread_create(&animate, NULL, thread_animate, kntxt))
         perror("thread: animate");
 
-    // starting console at the very end, cleaning screen
+    // starting console at the very end to keep screen clean
+    // if some early error appears
     printf("[+] starting console monitoring thread\n");
     if(pthread_create(&console, NULL, thread_console, kntxt))
         perror("thread: console");
@@ -804,6 +819,8 @@ int main(int argc, char *argv[]) {
     pthread_join(midi, NULL);
     pthread_join(console, NULL);
     pthread_join(animate, NULL);
+
+    cleanup(kntxt);
 
     return 0;
 }
