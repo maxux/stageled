@@ -15,6 +15,8 @@
 #include <png.h>
 #include <pthread.h>
 
+#define LOGGER_SIZE 8192
+
 //
 // global context
 //
@@ -72,10 +74,15 @@ typedef struct kntxt_t {
     server_stats_t status;
     pthread_mutex_t lock;
     uint8_t interface;
+    char *logger;
 
     char blackout;
 
 } kntxt_t;
+
+kntxt_t mainctx = {
+    .stats_frames = 0,
+};
 
 //
 // helpers
@@ -98,6 +105,20 @@ void diea(char *str, int err) {
 void *imgerr(char *str) {
     fprintf(stderr, "image: %s\n", str);
     return NULL;
+}
+
+//
+// logging
+//
+void logger(char *fmt, ...) {
+    char buffer[1024];
+
+    va_list va;
+    va_start(va, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, va);
+    va_end(va);
+
+    strcat(mainctx.logger, buffer);
 }
 
 //
@@ -133,7 +154,7 @@ frame_t *loadframe(char *imgfile) {
     int width = png_get_image_width(ctx, info);
     int height = png_get_image_height(ctx, info);
 
-    printf("[+] image dimension: %d x %d px\n", width, height);
+    logger("[+] image dimension: %d x %d px\n", width, height);
 
     png_bytep *lines = (png_bytep *) malloc(sizeof(png_bytep) * height);
     for(int y = 0; y < height; y++)
@@ -357,8 +378,8 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
         for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
             if(presets[i] == ev->data.note.note) {
-                printf("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
-                printf("\033[K\n");
+                logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
+                // printf("\033[K\n");
 
                 pthread_mutex_lock(&kntxt->lock);
 
@@ -652,15 +673,13 @@ int main(int argc, char *argv[]) {
     (void) argv;
     printf("[+] initializing stage-led controle interface\n");
     pthread_t netsend, feedback, midi, console, animate;
-    kntxt_t mainctx = {
-        .stats_frames = 0,
-    };
 
     // context initializer
     void *kntxt = &mainctx;
 
     mainctx.pixels = calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.bitmap = calloc(sizeof(uint8_t), BITMAPSIZE);
+    mainctx.logger = calloc(sizeof(char), LOGGER_SIZE);
 
     memset(&mainctx.midi, 0x00, sizeof(transform_t));
     mainctx.midi.lines = 8; // 8 channels
@@ -689,13 +708,14 @@ int main(int argc, char *argv[]) {
     if(pthread_create(&midi, NULL, thread_midi, kntxt))
         perror("thread: midi");
 
-    printf("[+] starting console monitoring thread\n");
-    if(pthread_create(&console, NULL, thread_console, kntxt))
-        perror("thread: console");
-
     printf("[+] starting animator thread\n");
     if(pthread_create(&animate, NULL, thread_animate, kntxt))
         perror("thread: animate");
+
+    // starting console at the very end, cleaning screen
+    printf("[+] starting console monitoring thread\n");
+    if(pthread_create(&console, NULL, thread_console, kntxt))
+        perror("thread: console");
 
     pthread_join(netsend, NULL);
     pthread_join(feedback, NULL);
