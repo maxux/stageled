@@ -469,8 +469,15 @@ int netsend_transmit_frame(kntxt_t *kntxt) {
 
     int serverlen = sizeof(serveraddr);
 
+    // sending bitmap
+    pthread_mutex_lock(&kntxt->lock);
+
     int n = sendto(sockfd, kntxt->bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
-    if (n < 0)
+    kntxt->client.frames += 1;
+
+    pthread_mutex_unlock(&kntxt->lock);
+
+    if(n < 0)
       diep("sendto");
 
     close(sockfd);
@@ -484,12 +491,7 @@ void *thread_netsend(void *extra) {
     logger("[+] netsend: sending frames to controler");
 
     while(1) {
-        pthread_mutex_lock(&kntxt->lock);
-
         netsend_transmit_frame(kntxt);
-
-        pthread_mutex_unlock(&kntxt->lock);
-
         usleep(50000);
     }
 
@@ -815,10 +817,12 @@ int main(int argc, char *argv[]) {
     kntxt_t mainctx;
     void *kntxt = &mainctx;
 
+    // default initialization
+    memset(kntxt, 0x00, sizeof(kntxt_t));
+
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.bitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
 
-    memset(&mainctx.midi, 0x00, sizeof(transform_t));
     mainctx.midi.lines = 8; // 8 channels
     mainctx.speed = 50000;
 
