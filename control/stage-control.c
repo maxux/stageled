@@ -589,23 +589,23 @@ void *thread_midi(void *extra) {
 }
 
 void console_border_top(char *name) {
-    printf("┌");
+    int printed = printf("\033[1;30m┌──┤ \033[34m%s\033[30m ├", name);
 
-    for(int pixel = 0; pixel < PERSEGMENT + 3; pixel++) {
+    for(int pixel = 0; pixel < PERSEGMENT - printed + 31; pixel++) {
         printf("─");
     }
 
-    printf("┐\n");
+    printf("┐\033[0m\n");
 }
 
 void console_border_bottom() {
-    printf("└");
+    printf("\033[1;30m└");
 
     for(int pixel = 0; pixel < PERSEGMENT + 3; pixel++) {
         printf("─");
     }
 
-    printf("┘\n");
+    printf("┘\033[0m\n");
 }
 
 void console_print_line(char *fmt, ...) {
@@ -618,7 +618,7 @@ void console_print_line(char *fmt, ...) {
     va_end(va);
 
     // enclose the line into borders
-    printf("│%-*s│\n", PERSEGMENT + 3, buffer);
+    printf("\033[1;30m│\033[0m%-*s\033[1;30m│\n", PERSEGMENT + 3, buffer);
 }
 
 void *thread_console(void *extra) {
@@ -641,7 +641,7 @@ void *thread_console(void *extra) {
         console_border_top("Pixel Monitoring");
 
         for(int line = 0; line < SEGMENTS; line++) {
-            printf("│%2d ", line + 1);
+            printf("\033[1;30m│%2d ", line + 1);
 
             for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
                 int index = (line * PERSEGMENT) + pixel;
@@ -650,7 +650,7 @@ void *thread_console(void *extra) {
                 printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
             }
 
-            printf("\033[0m│\n");
+            printf("\033[1;30m│\n");
         }
 
         console_border_bottom();
