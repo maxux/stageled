@@ -623,6 +623,15 @@ void *thread_console(void *extra) {
         printf("\n\n");
         printf("Master: % 4d\n", kntxt->midi.master);
 
+
+        printf("State.......: %lu ----\n", kntxt->status.state);
+        printf("Old Frames..: %lu ----\n", kntxt->status.old_frames);
+        printf("Frames......: %lu ----\n", kntxt->status.frames);
+        printf("FPS.........: %lu ----\n", kntxt->status.fps);
+        printf("Time Last...: %lu ----\n", kntxt->status.time_last_frame);
+        printf("Time Now....: %lu ----\n", kntxt->status.time_current);
+
+
         pthread_mutex_unlock(&kntxt->lock);
 
         usleep(10000);
