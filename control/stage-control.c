@@ -66,6 +66,8 @@ typedef struct controler_stats_t {
 
 typedef struct control_stats_t {
     uint64_t frames;
+    uint64_t ctrl_initial_frames;
+    uint64_t ctrl_initial_time;
 
 } control_stats_t;
 
@@ -563,6 +565,18 @@ void *thread_feedback(void *extra) {
         }
 
         pthread_mutex_lock(&kntxt->lock);
+
+        if(kntxt->controler.time_current == 0) {
+            logger("[+] feedback: first message received from the controler");
+
+            // save a copy of initial message to be able
+            // to compute relative counters
+            controler_stats_t initial;
+            memcpy(&initial, message, bytes);
+
+            kntxt->client.ctrl_initial_frames = initial.frames;
+            kntxt->client.ctrl_initial_time = initial.time_current;
+        }
 
         // make a lazy binary copy from controler
         memcpy(&kntxt->controler, message, bytes);
