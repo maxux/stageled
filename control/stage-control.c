@@ -17,6 +17,11 @@
 #include <pthread.h>
 
 #define LOGGER_SIZE 32
+#define SEGMENTS    24
+#define PERSEGMENT  120
+#define LEDSTOTAL   (SEGMENTS * PERSEGMENT)
+#define BITMAPSIZE  (LEDSTOTAL * 3)
+#define BUFSIZE     1024
 
 //
 // global context
@@ -233,81 +238,6 @@ frame_t *loadframe(char *imgfile) {
 
     return frame;
 }
-
-//
-// led controler
-//
-
-#define SEGMENTS     24
-#define PERSEGMENT   120
-#define LEDSTOTAL    (SEGMENTS * PERSEGMENT)
-#define BITMAPSIZE   (LEDSTOTAL * 3)
-#define BUFSIZE 1024
-
-/*
-int animate(frame_t *frame) {
-    int sockfd, portno, n;
-    int serverlen;
-    struct sockaddr_in serveraddr;
-    struct hostent *server;
-    char *hostname;
-    uint8_t map[BITMAPSIZE];
-
-    hostname = "10.241.0.133";
-    portno = 1111;
-
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if(sockfd < 0)
-        diep("socket");
-
-    server = gethostbyname(hostname);
-    if(server == NULL) {
-        fprintf(stderr,"ERROR, no such host as %s\n", hostname);
-        exit(0);
-    }
-
-    bzero((char *) &serveraddr, sizeof(serveraddr));
-    serveraddr.sin_family = AF_INET;
-
-    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
-    serveraddr.sin_port = htons(portno);
-
-    serverlen = sizeof(serveraddr);
-
-    int line = 0;
-
-    while(1) {
-        for(int a = 0; a < LEDSTOTAL; a++) {
-            printf("%x\n", frame->pixels[(line * frame->width) + a]);
-
-            pixel_t target = {
-                .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
-                .g = (frame->pixels[(line * frame->width) + a] & 0x00ff00) >> 8,
-                .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
-            };
-
-
-
-            map[(a * 3) + 0] = target.r;
-            map[(a * 3) + 1] = target.g;
-            map[(a * 3) + 2] = target.b;
-        }
-
-        printf("sending\n");
-        n = sendto(sockfd, map, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
-
-        if (n < 0)
-          diep("sendto");
-
-        usleep(50000);
-
-        line += 1;
-        if(line >= frame->height)
-            line = 0;
-    }
-
-}
-*/
 
 //
 // network frame transmiter
