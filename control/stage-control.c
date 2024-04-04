@@ -637,6 +637,10 @@ void console_border_bottom() {
     printf("┘\033[0m\n");
 }
 
+void console_border_single() {
+    printf("\033[1;30m│\033[0m");
+}
+
 void console_print_line(char *fmt, ...) {
     char buffer[1024];
 
@@ -693,25 +697,43 @@ void *thread_console(void *extra) {
         //
         console_border_top("MIDI Channels");
 
-        printf("│ ");
+        console_border_single();
+        printf(" HI ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].high);
 
-        printf("│\n│");
+        printf("\n");
+
+        console_border_single();
+        printf(" MI ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].mid);
 
-        printf("│\n│");
+        printf("\n");
+
+        console_border_single();
+        printf(" LO ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].low);
 
-        printf("│\n│");
+        printf("\n");
+
+        console_print_line("\033[1;30m ──────────────────────────────────────────── ");
+
+        console_border_single();
+        printf(" SL ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].slider);
 
+        printf("\n");
+
+        float speedfps = 1000000.0 / kntxt->speed;
+
         console_print_line(" ");
         console_print_line("Master: % 4d", kntxt->midi.master);
-        console_print_line("%s", kntxt->interface ? COK(" interface online ") : CBAD(" interface offline "));
+        console_print_line("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
+        console_print_line("");
+        console_print_line("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
 
         console_border_bottom();
 
@@ -782,8 +804,7 @@ void *thread_console(void *extra) {
         pthread_mutex_unlock(&logs->lock);
         console_border_bottom();
 
-
-        usleep(10000);
+        usleep(20000);
     }
 
     return NULL;
