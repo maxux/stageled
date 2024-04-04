@@ -616,13 +616,16 @@ void *thread_midi(void *extra) {
         diep("ports: calloc");
 
     // hardcoded keyboard port
-    if((err = snd_seq_parse_address(seq, &ports[0], "MIDI Mix")) < 0)
-        diea("parse: address", err);
+    if((err = snd_seq_parse_address(seq, &ports[0], "MIDI Mix")) < 0) {
+        kntxt->midi.master = 255;
+        logger("[-] midi: parse address: %s", snd_strerror(err));
+        return NULL;
+    }
 
     if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
         kntxt->midi.master = 255;
+        logger("[-] midi: connect: %s", snd_strerror(err));
         return NULL;
-        // diea("ports: connect", err);
     }
 
     struct pollfd *pfds;
