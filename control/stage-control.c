@@ -71,6 +71,7 @@ typedef struct kntxt_t {
     useconds_t speed;
     server_stats_t status;
     pthread_mutex_t lock;
+    uint8_t interface;
 
     char blackout;
 
@@ -550,17 +551,22 @@ void *thread_midi(void *extra) {
         diep("ports: calloc");
 
     // hardcoded keyboard port
-    if((err = snd_seq_parse_address(seq, &ports[0], "24")) < 0)
+    if((err = snd_seq_parse_address(seq, &ports[0], "20")) < 0)
         diea("parse: address", err);
 
-    if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0)
-        diea("ports: connect", err);
+    if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
+        kntxt->midi.master = 255;
+        return NULL;
+        // diea("ports: connect", err);
+    }
 
     struct pollfd *pfds;
     int npfds;
 
     npfds = snd_seq_poll_descriptors_count(seq, POLLIN);
     pfds = alloca(sizeof(*pfds) * npfds);
+
+    kntxt->interface = 1;
 
     // polling events
     while(1) {
