@@ -629,6 +629,7 @@ void *thread_console(void *extra) {
         printf("\n\n");
         printf("Master: % 4d\n", kntxt->midi.master);
 
+        printf("Interface: %s\n", kntxt->interface ? "connected" : "not found");
 
         printf("State.......: %lu ----\n", kntxt->status.state);
         printf("Old Frames..: %lu ----\n", kntxt->status.old_frames);
