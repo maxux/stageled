@@ -93,9 +93,8 @@ typedef struct kntxt_t {
 
 typedef struct logger_t {
     char **lines;
-    size_t capacity;
-    size_t current;
-    size_t nextid;
+    int capacity;
+    int nextid;
 
     pthread_mutex_t lock;
 
@@ -142,7 +141,7 @@ void logger(char *fmt, ...) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
 
-    sprintf(timed, "[%d:%d:%d] %s", tm->tm_hour, tm->tm_min, tm->tm_sec, buffer);
+    sprintf(timed, "[%02d:%02d:%02d] %s", tm->tm_hour, tm->tm_min, tm->tm_sec, buffer);
 
     // locking logger and append log line
     pthread_mutex_lock(&logs->lock);
@@ -191,7 +190,7 @@ frame_t *loadframe(char *imgfile) {
     int width = png_get_image_width(ctx, info);
     int height = png_get_image_height(ctx, info);
 
-    logger("[+] image dimension: %d x %d px\n", width, height);
+    logger("[+] image dimension: %d x %d px", width, height);
 
     png_bytep *lines = (png_bytep *) malloc(sizeof(png_bytep) * height);
     for(int y = 0; y < height; y++)
@@ -657,8 +656,22 @@ void console_border_bottom() {
     printf("┘\n");
 }
 
+void console_print_line(char *fmt, ...) {
+    char buffer[1024], formatted[1096];
+
+    // build the string to print
+    va_list va;
+    va_start(va, fmt);
+    int printed = vsnprintf(buffer, sizeof(buffer), fmt, va);
+    va_end(va);
+
+    // enclose the line into borders
+    printf("│%-*s│\n", PERSEGMENT + 3, buffer);
+}
+
 void *thread_console(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
+    logger_t *logs = &mainlog;
 
     // printf("[+] preparing console for monitoring\n");
     // usleep(5000000);
@@ -695,46 +708,63 @@ void *thread_console(void *extra) {
         //
         console_border_top("MIDI Channels");
 
+        printf("│ ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].high);
 
-        printf("\n");
+        printf("│\n│");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].mid);
 
-        printf("\n");
+        printf("│\n│");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].low);
 
-        printf("\n");
+        printf("│\n│");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].slider);
 
-        printf("\n\n");
-        printf("Master: % 4d\n", kntxt->midi.master);
+        console_print_line(" ");
+        console_print_line("Master: % 4d", kntxt->midi.master);
+        console_print_line("Interface: %s", kntxt->interface ? "connected" : "not found");
 
-        printf("Interface: %s\n", kntxt->interface ? "connected" : "not found");
+        console_border_bottom();
+
+        console_border_top("Statistics");
+
+        console_print_line("State.......: %lu ----", kntxt->controler.state);
+        console_print_line("Old Frames..: %lu ----", kntxt->controler.old_frames);
+        console_print_line("Frames......: %lu ----", kntxt->controler.frames);
+        console_print_line("FPS.........: %lu ----", kntxt->controler.fps);
+        console_print_line("Time Last...: %lu ----", kntxt->controler.time_last_frame);
+        console_print_line("Time Now....: %lu ----", kntxt->controler.time_current);
 
         console_border_bottom();
 
-        console_border_top("MIDI Channels");
-
-        printf("State.......: %lu ----\n", kntxt->controler.state);
-        printf("Old Frames..: %lu ----\n", kntxt->controler.old_frames);
-        printf("Frames......: %lu ----\n", kntxt->controler.frames);
-        printf("FPS.........: %lu ----\n", kntxt->controler.fps);
-        printf("Time Last...: %lu ----\n", kntxt->controler.time_last_frame);
-        printf("Time Now....: %lu ----\n", kntxt->controler.time_current);
-
-        console_border_bottom();
+        // we are done with main context
+        pthread_mutex_unlock(&kntxt->lock);
 
         console_border_top("Logger");
+        pthread_mutex_lock(&logs->lock);
 
-        // printf("%s", kntxt->logger);
+        int show = 6;
+        int index = logs->nextid - show;
 
+        for(int i = 0; i < show; i++) {
+            int display = index;
+
+            if(index < 0)
+                display = logs->capacity + index;
+
+            if(logs->lines[display] != NULL)
+                console_print_line("%s", logs->lines[display]);
+
+            index += 1;
+        }
+
+        pthread_mutex_unlock(&logs->lock);
         console_border_bottom();
 
-        pthread_mutex_unlock(&kntxt->lock);
 
         usleep(10000);
     }
@@ -760,16 +790,14 @@ int main(int argc, char *argv[]) {
     printf("[+] initializing stage-led controle interface\n");
     pthread_t netsend, feedback, midi, console, animate;
 
-    // keep context local
-    kntxt_t mainctx;
-
     // logger initializer
     memset(&mainlog, 0x00, sizeof(logger_t));
     pthread_mutex_init(&mainlog.lock, NULL);
     mainlog.capacity = LOGGER_SIZE;
     mainlog.lines = (char **) calloc(sizeof(char *), mainlog.capacity);
 
-    // context initializer
+    // create a local context
+    kntxt_t mainctx;
     void *kntxt = &mainctx;
 
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
