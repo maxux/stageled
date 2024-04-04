@@ -551,7 +551,7 @@ void *thread_midi(void *extra) {
         diep("ports: calloc");
 
     // hardcoded keyboard port
-    if((err = snd_seq_parse_address(seq, &ports[0], "20")) < 0)
+    if((err = snd_seq_parse_address(seq, &ports[0], "MIDI Mix")) < 0)
         diea("parse: address", err);
 
     if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
