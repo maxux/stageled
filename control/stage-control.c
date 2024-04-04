@@ -610,6 +610,26 @@ void *thread_midi(void *extra) {
     return NULL;
 }
 
+void console_border_top(char *name) {
+    printf("┌");
+
+    for(int pixel = 0; pixel < PERSEGMENT + 3; pixel++) {
+        printf("─");
+    }
+
+    printf("┐\n");
+}
+
+void console_border_bottom() {
+    printf("└");
+
+    for(int pixel = 0; pixel < PERSEGMENT + 3; pixel++) {
+        printf("─");
+    }
+
+    printf("┘\n");
+}
+
 void *thread_console(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
 
@@ -618,10 +638,16 @@ void *thread_console(void *extra) {
     while(1) {
         pthread_mutex_lock(&kntxt->lock);
 
-        // printf("\033[2J"); // clean entire screen
         printf("\033[H"); // cursor to home
 
+        //
+        // pixel dump
+        //
+        console_border_top("Pixel Monitoring");
+
         for(int line = 0; line < SEGMENTS; line++) {
+            printf("│%2d ", line + 1);
+
             for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
                 int index = (line * PERSEGMENT) + pixel;
                 pixel_t *color = &kntxt->pixels[index];
@@ -629,8 +655,15 @@ void *thread_console(void *extra) {
                 printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
             }
 
-            printf("\033[0m\n");
+            printf("\033[0m│\n");
         }
+
+        console_border_bottom();
+
+        //
+        // midi values
+        //
+        console_border_top("MIDI Channels");
 
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].high);
@@ -652,6 +685,10 @@ void *thread_console(void *extra) {
 
         printf("Interface: %s\n", kntxt->interface ? "connected" : "not found");
 
+        console_border_bottom();
+
+        console_border_top("MIDI Channels");
+
         printf("State.......: %lu ----\n", kntxt->status.state);
         printf("Old Frames..: %lu ----\n", kntxt->status.old_frames);
         printf("Frames......: %lu ----\n", kntxt->status.frames);
@@ -659,6 +696,13 @@ void *thread_console(void *extra) {
         printf("Time Last...: %lu ----\n", kntxt->status.time_last_frame);
         printf("Time Now....: %lu ----\n", kntxt->status.time_current);
 
+        console_border_bottom();
+
+        console_border_top("Logger");
+
+        printf("%s", kntxt->logger);
+
+        console_border_bottom();
 
         pthread_mutex_unlock(&kntxt->lock);
 
