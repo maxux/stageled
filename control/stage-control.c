@@ -926,32 +926,37 @@ void *thread_console(void *extra) {
         //
         console_border_top("Statistics");
 
-        double lastping = timediff(&now, &kntxt->client.ctrl_last_feedback);
+        control_stats_t *client = &kntxt->client;
+        controler_stats_t *controler = &kntxt->controler;
 
-        size_t showframes = kntxt->controler.frames - kntxt->client.ctrl_initial_frames;
-        size_t dropped = kntxt->client.frames - showframes;
-        float droprate = (dropped / (double) kntxt->client.frames) * 100;
+        double lastping = timediff(&now, &client->ctrl_last_feedback);
 
-        char *sessup = uptime_prettify(kntxt->controler.time_current - kntxt->client.ctrl_initial_time);
-        char *ctrlup = uptime_prettify(kntxt->controler.time_current);
+        char *sessup = uptime_prettify(controler->time_current - client->ctrl_initial_time);
+        char *ctrlup = uptime_prettify(controler->time_current);
 
-        char *state = (kntxt->controler.state == 0) ? CWAIT(" waiting ") : COK(" online ");
-        if(kntxt->controler.state > 0 && lastping > 2.0)
+        char *state = (controler->state == 0) ? CWAIT(" waiting ") : COK(" online ");
+        if(controler->state > 0 && lastping > 2.0)
             state = CBAD(" timed out ");
 
         console_print_line("Controler: %s", state);
 
-        if(kntxt->controler.state == 0) {
+        if(controler->state == 0) {
             console_print_line("Last seen: %s", CWAIT(" waiting "));
 
         } else {
-            console_print_line("Last seen: %.1f seconds ago", lastping);
+            console_print_line("Last seen: %.2f seconds ago", lastping);
         }
 
         console_print_line("");
 
-        console_print_line("Frames displayed: % 6lu [%2d fps]", showframes, kntxt->controler.fps);
-        console_print_line("Frames committed: %lu, dropped: %lu [%.1f%%]", kntxt->client.frames, dropped, droprate);
+        // coloring fps
+        char strfps[64];
+        sprintf(strfps, CGOOD "%2lu fps" CRST, controler->fps);
+        if(controler->fps < 20)
+            sprintf(strfps, CWARN "%2lu fps" CRST, controler->fps);
+
+        console_print_line("Frames displayed: % 6lu, %s", client->showframes, strfps);
+        console_print_line("Frames committed: % 6lu, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
 
         console_print_line("");
         console_print_line("Controler uptime: %s", ctrlup);
