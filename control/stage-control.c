@@ -26,6 +26,8 @@
 #define TARGET_FPS  30
 
 #define CRST        "\033[0m"
+#define CWARN       "\033[1;33m"
+#define CGOOD       "\033[1;32m"
 #define CWAIT(x)    "\033[1;37;44m" x CRST
 #define COK(x)      "\033[1;37;42m" x CRST
 #define CBAD(x)     "\033[1;37;41m" x CRST
@@ -80,6 +82,9 @@ typedef struct control_stats_t {
     uint64_t frames;
     uint64_t ctrl_initial_frames;
     uint64_t ctrl_initial_time;
+    uint64_t showframes;
+    uint64_t dropped;
+    double droprate;
     struct timeval ctrl_last_feedback;
 
 } control_stats_t;
@@ -573,6 +578,10 @@ void *thread_feedback(void *extra) {
             controler_stats_t initial;
             memcpy(&initial, message, bytes);
 
+            // resetting internal frames counter
+            // to get droprate in sync
+            kntxt->client.frames = 0;
+
             kntxt->client.ctrl_initial_frames = initial.frames;
             kntxt->client.ctrl_initial_time = initial.time_current;
 
@@ -582,6 +591,11 @@ void *thread_feedback(void *extra) {
         // make a lazy binary copy from controler
         memcpy(&kntxt->controler, message, bytes);
         gettimeofday(&kntxt->client.ctrl_last_feedback, NULL);
+
+        kntxt->client.showframes = (kntxt->controler.frames - kntxt->client.ctrl_initial_frames);
+        kntxt->client.dropped = kntxt->client.frames - kntxt->client.showframes;
+        if(kntxt->client.frames)
+            kntxt->client.droprate = (kntxt->client.dropped / (double) kntxt->client.frames) * 100;
 
         pthread_mutex_unlock(&kntxt->lock);
     }
