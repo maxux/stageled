@@ -748,8 +748,12 @@ void console_print_line(char *fmt, ...) {
     vsnprintf(buffer, sizeof(buffer), fmt, va);
     va_end(va);
 
-    // enclose the line into borders
-    printf("\033[1;30m│\033[0m%-*s\033[1;30m│\n", PERSEGMENT + 3, buffer);
+    // first write a line with borders
+    printf("\033[1;30m│\033[0m%-*s\033[1;30m│\033[0m\r", PERSEGMENT + 3, " ");
+
+    // then write the buffer
+    // (this is a workaround for including escape inside buffer)
+    printf("\033[1;30m│\033[0m%s\n", buffer);
 }
 
 void *thread_console(void *extra) {
