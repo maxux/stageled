@@ -721,7 +721,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     pthread_mutex_lock(&kntxt->lock);
 
     if(kntxt->midi.channels[7].slider > 0) {
-        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
+        kntxt->speed = (1000000 / kntxt->midi.channels[7].slider);
 
     } else {
         kntxt->speed = 1000000 / TARGET_FPS;
