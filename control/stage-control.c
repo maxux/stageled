@@ -431,6 +431,12 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
     uint8_t strobe_index = kntxt->strobe_index;
     uint8_t strobe_state = kntxt->strobe_state;
 
+    uint8_t colorize[] = {
+        kntxt->midi.channels[0].high,
+        kntxt->midi.channels[0].mid,
+        kntxt->midi.channels[0].low,
+    };
+
     if(strobe)
         kntxt->strobe_index += 1;
 
@@ -456,6 +462,18 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
     }
 
     pthread_mutex_unlock(&kntxt->lock);
+
+    if(colorize[0] || colorize[1] || colorize[2]) {
+        float redmul = (255 - colorize[0]) / 255.0;
+        float greenmul = (255 - colorize[1]) / 255.0;
+        float bluemul = (255 - colorize[2]) / 255.0;
+
+        for(int i = 0; i < LEDSTOTAL; i++) {
+            localpixels[i].r = (uint8_t) (localpixels[i].r * redmul);
+            localpixels[i].g = (uint8_t) (localpixels[i].g * greenmul);
+            localpixels[i].b = (uint8_t) (localpixels[i].b * bluemul);
+        }
+    }
 
     // only compute floating master transformation if needed
     if(rawmaster < 255 && rawmaster > 0) {
