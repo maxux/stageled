@@ -277,33 +277,6 @@ frame_t *frame_loadfile(char *imgfile) {
     return frame;
 }
 
-void animate_transform_apply(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *localbitmap) {
-    // fetch settings from main context
-    pthread_mutex_lock(&kntxt->lock);
-
-    double master = kntxt->midi.master / 255.0;
-    char blackout = kntxt->blackout;
-
-    pthread_mutex_unlock(&kntxt->lock);
-
-    // applying settings to frame
-    if(blackout)
-        master = 0;
-
-    for(int i = 0; i < LEDSTOTAL; i++) {
-        localpixels[i].r = (uint8_t) (localpixels[i].r * master);
-        localpixels[i].g = (uint8_t) (localpixels[i].g * master);
-        localpixels[i].b = (uint8_t) (localpixels[i].b * master);
-    }
-
-    // building network frame bitmap
-    for(int i = 0; i < LEDSTOTAL; i++) {
-        localbitmap[(i * 3) + 0] = localpixels[i].r;
-        localbitmap[(i * 3) + 1] = localpixels[i].g;
-        localbitmap[(i * 3) + 2] = localpixels[i].b;
-    }
-}
-
 void *thread_animate(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     frame_t *frame;
@@ -390,7 +363,12 @@ void *thread_presets(void *extra) {
 
         // commit frame
         pthread_mutex_lock(&kntxt->lock);
-        // FIXME: check if pending frame is acquired otherwise clean it
+        // free previous frame not yet acquired by animate thread
+        if(kntxt->frame) {
+            free(kntxt->frame->pixels);
+            free(kntxt->frame);
+        }
+
         kntxt->frame = frame;
         pthread_mutex_unlock(&kntxt->lock);
 
@@ -438,6 +416,37 @@ int netsend_transmit_frame(uint8_t *bitmap) {
     return 0;
 }
 
+void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *localbitmap) {
+    // fetch settings from main context
+    pthread_mutex_lock(&kntxt->lock);
+
+    uint8_t rawmaster = kntxt->midi.master;
+    double master = kntxt->midi.master / 255.0;
+    char blackout = kntxt->blackout;
+
+    pthread_mutex_unlock(&kntxt->lock);
+
+    // applying settings to frame
+    if(blackout)
+        master = 0;
+
+    // skip master transformation if not required
+    if(rawmaster != 255) {
+        for(int i = 0; i < LEDSTOTAL; i++) {
+            localpixels[i].r = (uint8_t) (localpixels[i].r * master);
+            localpixels[i].g = (uint8_t) (localpixels[i].g * master);
+            localpixels[i].b = (uint8_t) (localpixels[i].b * master);
+        }
+    }
+
+    // building network frame bitmap
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        localbitmap[(i * 3) + 0] = localpixels[i].r;
+        localbitmap[(i * 3) + 1] = localpixels[i].g;
+        localbitmap[(i * 3) + 2] = localpixels[i].b;
+    }
+}
+
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
 
@@ -453,7 +462,7 @@ void *thread_netsend(void *extra) {
         pthread_mutex_unlock(&kntxt->lock);
 
         // apply transformation
-        animate_transform_apply(kntxt, localpixels, localbitmap);
+        netsend_pixels_transform(kntxt, localpixels, localbitmap);
 
         // commit transformation to monitor to see changes on console
         pthread_mutex_lock(&kntxt->lock);
