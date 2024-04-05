@@ -1058,8 +1058,8 @@ int main(int argc, char *argv[]) {
     mainctx.speed = 1000000 / TARGET_FPS;
 
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
-    mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
-    mainctx.presets[2] = "/home/maxux/git/stageled/templates/linear-solid.png";
+    mainctx.presets[1] = "/home/maxux/git/stageled/templates/kermesse.png";
+    mainctx.presets[2] = "/home/maxux/git/stageled/templates/spectre3.png";
     mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
     mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
     mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
