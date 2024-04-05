@@ -90,7 +90,10 @@ typedef struct kntxt_t {
     frame_t *frame;
     transform_t midi;
     useconds_t speed;
-    char blackout;
+    uint8_t blackout;
+    uint8_t strobe;
+    uint8_t strobe_state;
+    uint32_t strobe_index;
 
     char *presets[8];
     char *preset;
@@ -421,22 +424,52 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
     pthread_mutex_lock(&kntxt->lock);
 
     uint8_t rawmaster = kntxt->midi.master;
-    double master = kntxt->midi.master / 255.0;
-    char blackout = kntxt->blackout;
+    uint8_t blackout = kntxt->blackout;
 
-    pthread_mutex_unlock(&kntxt->lock);
+    uint8_t strobe = kntxt->strobe;
+    uint8_t strobe_index = kntxt->strobe_index;
+    uint8_t strobe_state = kntxt->strobe_state;
+
+    if(strobe)
+        kntxt->strobe_index += 1;
 
     // applying settings to frame
     if(blackout)
-        master = 0;
+        rawmaster = 0;
 
-    // skip master transformation if not required
-    if(rawmaster != 255) {
+    // checking if a strobe mask needs to be applied
+    if(strobe && !blackout) {
+        int divider = ((256 - strobe) / 20);
+        if(divider < 1)
+            divider = 1;
+
+        // check if we need to change the state
+        if(strobe_index % divider == 0) {
+            strobe_state = (strobe_state) ? 0 : 1;
+            kntxt->strobe_state = strobe_state;
+        }
+
+        // check if we need to apply something
+        if(strobe_state == 0)
+            rawmaster = 0;
+    }
+
+    pthread_mutex_unlock(&kntxt->lock);
+
+    // only compute floating master transformation if needed
+    if(rawmaster < 255 && rawmaster > 0) {
+        double master = rawmaster / 255.0;
+
         for(int i = 0; i < LEDSTOTAL; i++) {
             localpixels[i].r = (uint8_t) (localpixels[i].r * master);
             localpixels[i].g = (uint8_t) (localpixels[i].g * master);
             localpixels[i].b = (uint8_t) (localpixels[i].b * master);
         }
+    }
+
+    if(rawmaster == 0) {
+        // force setting all pixels to zero in a more efficient way
+        memset(localpixels, 0x00, sizeof(pixel_t) * LEDSTOTAL);
     }
 
     // building network frame bitmap
@@ -624,6 +657,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
             }
 
+            // master channel
             if(ev->data.control.param == 62)
                 kntxt->midi.master = midi_value_parser(ev->data.control.value);
         }
@@ -640,6 +674,13 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
     } else {
         kntxt->speed = 50000;
+    }
+
+    // apply strobe value
+    kntxt->strobe = kntxt->midi.channels[6].slider;
+    if(kntxt->strobe == 0) {
+        kntxt->strobe_index = 0;
+        kntxt->strobe_state = 0;
     }
 
     pthread_mutex_unlock(&kntxt->lock);
@@ -832,7 +873,14 @@ void *thread_console(void *extra) {
         float speedfps = 1000000.0 / kntxt->speed;
 
         console_print_line(" ");
-        console_print_line("Master: % 4d", kntxt->midi.master);
+        if(kntxt->blackout) {
+            console_print_line("Master: %3d %s", kntxt->midi.master, CBAD(" BLACKOUT ENABLED "));
+
+        } else {
+            console_print_line("Master: %3d", kntxt->midi.master);
+        }
+
+        console_print_line("Strobe: %3d [index %3d]", kntxt->strobe, kntxt->strobe_index);
         console_print_line("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
         console_print_line("");
         console_print_line("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
@@ -960,7 +1008,7 @@ int main(int argc, char *argv[]) {
     mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
     mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
     mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
-    mainctx.presets[7] = "/home/maxux/git/stageled/templates/strobe.png";
+    mainctx.presets[7] = "/home/maxux/git/stageled/templates/full.png";
     mainctx.preset = mainctx.presets[0];
 
     // loading default frame
