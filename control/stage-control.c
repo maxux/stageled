@@ -23,6 +23,7 @@
 #define LEDSTOTAL   (SEGMENTS * PERSEGMENT)
 #define BITMAPSIZE  (LEDSTOTAL * 3)
 #define BUFSIZE     1024
+#define TARGET_FPS  30
 
 #define CRST        "\033[0m"
 #define CWAIT(x)    "\033[1;37;44m" x CRST
@@ -506,7 +507,7 @@ void *thread_netsend(void *extra) {
         // sending the frame to the controler
         netsend_transmit_frame(localbitmap);
 
-        usleep(50000);
+        usleep(1000000 / TARGET_FPS);
     }
 
     free(localpixels);
@@ -673,7 +674,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
         kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
 
     } else {
-        kntxt->speed = 50000;
+        kntxt->speed = 1000000 / TARGET_FPS;
     }
 
     // apply strobe value
@@ -999,7 +1000,7 @@ int main(int argc, char *argv[]) {
     mainctx.monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     mainctx.midi.lines = 8; // 8 channels
-    mainctx.speed = 50000;
+    mainctx.speed = 1000000 / TARGET_FPS;
 
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
     mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
