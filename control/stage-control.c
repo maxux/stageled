@@ -442,6 +442,12 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
         kntxt->midi.channels[0].low,
     };
 
+    uint8_t segments[] = {
+        kntxt->midi.channels[0].slider,
+        kntxt->midi.channels[1].slider,
+        kntxt->midi.channels[2].slider,
+    };
+
     if(strobe)
         kntxt->strobe_index += 1;
 
@@ -477,6 +483,18 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
             localpixels[i].r = (uint8_t) (localpixels[i].r * redmul);
             localpixels[i].g = (uint8_t) (localpixels[i].g * greenmul);
             localpixels[i].b = (uint8_t) (localpixels[i].b * bluemul);
+        }
+    }
+
+    if(segments[0] || segments[1] || segments[2]) {
+        for(int segment = 0; segment < 3; segment++) {
+            float attenuation = (255 - segments[segment]) / 255.0;
+
+            for(int i = (segment * PERSEGMENT); i < ((segment + 1) * PERSEGMENT); i++) {
+                localpixels[i].r = (uint8_t) (localpixels[i].r * attenuation);
+                localpixels[i].g = (uint8_t) (localpixels[i].g * attenuation);
+                localpixels[i].b = (uint8_t) (localpixels[i].b * attenuation);
+            }
         }
     }
 
