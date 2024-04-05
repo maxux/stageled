@@ -266,6 +266,14 @@ frame_t *frame_loadfile(char *imgfile) {
         }
     }
 
+    // cleanup working png stuff
+    for(int y = 0; y < height; y++)
+        free(lines[y]);
+
+    free(lines);
+
+    png_destroy_read_struct(&ctx, &info, NULL);
+
     return frame;
 }
 
