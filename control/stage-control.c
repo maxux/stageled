@@ -89,9 +89,11 @@ typedef struct kntxt_t {
 
     frame_t *frame;
     transform_t midi;
-    char *presets[8];
     useconds_t speed;
     char blackout;
+
+    char *presets[8];
+    char *preset;
 
     // remote and local stats
     controler_stats_t controler;
@@ -100,8 +102,11 @@ typedef struct kntxt_t {
     // flags to monitor interface presence
     uint8_t interface;
 
-    // thread locking
+    // master thread locking (FIXME)
     pthread_mutex_t lock;
+
+    pthread_cond_t cond_presets;
+    pthread_mutex_t mutcond_presets; // condition mutex
 
 } kntxt_t;
 
@@ -293,17 +298,35 @@ void animate_transform_apply(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loca
 
 void *thread_animate(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-
-    frame_t *xframe = frame_loadfile(kntxt->presets[0]);
-    kntxt->frame = xframe;
-    pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
-
+    frame_t *frame;
     int line = 0;
 
+    // allocate local copy of pixels
+    pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+
+    // fetch initial frame already loaded by loader
+    pthread_mutex_lock(&kntxt->lock);
+    // remove frame from context, keeping it for us
+    frame = kntxt->frame;
+    kntxt->frame = NULL;
+    pthread_mutex_unlock(&kntxt->lock);
+
     while(1) {
-        // check for changes
+        // checking for changes
         pthread_mutex_lock(&kntxt->lock);
-        frame_t *frame = kntxt->frame;
+        if(kntxt->frame != NULL) {
+            // cleaning frame not used anymore
+            free(frame->pixels);
+            free(frame);
+
+            // acquiring new frame
+            frame = kntxt->frame;
+            kntxt->frame = NULL;
+
+            // start from the begining of that frame
+            line = 0;
+        }
+        pthread_mutex_unlock(&kntxt->lock);
 
         for(int a = 0; a < LEDSTOTAL; a++) {
             pixel_t target = {
@@ -314,9 +337,6 @@ void *thread_animate(void *extra) {
 
             localpixels[a] = target;
         }
-
-        pthread_mutex_unlock(&kntxt->lock);
-
 
         // commit this frame pixel to main context
         pthread_mutex_lock(&kntxt->lock);
@@ -335,6 +355,42 @@ void *thread_animate(void *extra) {
     return NULL;
 }
 
+//
+// presets worker and loader
+//
+void *thread_presets(void *extra) {
+    kntxt_t *kntxt = (kntxt_t *) extra;
+    frame_t *frame;
+
+    logger("[+] presets: initializing presets, loading default one");
+
+    while(1) {
+        pthread_cond_wait(&kntxt->cond_presets, &kntxt->mutcond_presets);
+
+        // loading new preset name
+        pthread_mutex_lock(&kntxt->lock);
+        char *preset = strdup(kntxt->preset);
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // locally load the frame
+        logger("[+] presets: loading new presets: %s", preset);
+        if(!(frame = frame_loadfile(preset))) {
+            // load failed, skipping
+            free(preset);
+            continue;
+        }
+
+        // commit frame
+        pthread_mutex_lock(&kntxt->lock);
+        // FIXME: check if pending frame is acquired otherwise clean it
+        kntxt->frame = frame;
+        pthread_mutex_unlock(&kntxt->lock);
+
+        free(preset);
+    }
+
+    return NULL;
+}
 //
 // network transmitter management
 //
@@ -506,17 +562,13 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
         for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
             if(presets[i] == ev->data.note.note) {
-                logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
-                // printf("\033[K\n");
-
                 pthread_mutex_lock(&kntxt->lock);
 
-                frame_t *frame = frame_loadfile(kntxt->presets[i]);
-                kntxt->frame = frame;
+                logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
+                kntxt->preset = kntxt->presets[i];
+                pthread_cond_signal(&kntxt->cond_presets);
 
                 pthread_mutex_unlock(&kntxt->lock);
-
-                // FIXME: cleanup, concurrence...
 
                 return 0;
             }
@@ -763,6 +815,7 @@ void *thread_console(void *extra) {
         console_print_line("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
         console_print_line("");
         console_print_line("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
+        console_print_line("Animating: %s", kntxt->preset);
 
         console_border_bottom();
 
@@ -858,7 +911,7 @@ int main(int argc, char *argv[]) {
     (void) argv;
 
     printf("[+] initializing stage-led controle interface\n");
-    pthread_t netsend, feedback, midi, console, animate;
+    pthread_t netsend, feedback, midi, console, animate, presets;
 
     // logger initializer
     memset(&mainlog, 0x00, sizeof(logger_t));
@@ -887,8 +940,13 @@ int main(int argc, char *argv[]) {
     mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
     mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
     mainctx.presets[7] = "/home/maxux/git/stageled/templates/strobe.png";
+    mainctx.preset = mainctx.presets[0];
+
+    // loading default frame
+    mainctx.frame = frame_loadfile(mainctx.preset);
 
     pthread_mutex_init(&mainctx.lock, NULL);
+    pthread_cond_init(&mainctx.cond_presets, NULL);
 
     printf("[+] starting network dispatcher thread\n");
     if(pthread_create(&netsend, NULL, thread_netsend, kntxt))
@@ -905,6 +963,10 @@ int main(int argc, char *argv[]) {
     printf("[+] starting animator thread\n");
     if(pthread_create(&animate, NULL, thread_animate, kntxt))
         perror("thread: animate");
+
+    printf("[+] starting presets thread\n");
+    if(pthread_create(&presets, NULL, thread_presets, kntxt))
+        perror("thread: presets");
 
     // starting console at the very end to keep screen clean
     // if some early error appears
