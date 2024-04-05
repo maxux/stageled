@@ -85,8 +85,9 @@ typedef struct control_stats_t {
 
 typedef struct kntxt_t {
     pixel_t *pixels;
+    pixel_t *monitor; // monitoring output
+
     frame_t *frame;
-    uint8_t *bitmap;
     transform_t midi;
     char *presets[8];
     useconds_t speed;
@@ -189,9 +190,9 @@ void logger(char *fmt, ...) {
 }
 
 //
-// image management
+// image and transformation management
 //
-frame_t *loadframe(char *imgfile) {
+frame_t *frame_loadfile(char *imgfile) {
     FILE *fp;
     png_structp ctx;
     png_infop info;
@@ -263,46 +264,45 @@ frame_t *loadframe(char *imgfile) {
     return frame;
 }
 
-//
-// network frame transmiter
-//
-void animate_transform_apply(kntxt_t *kntxt) {
-    double master = kntxt->midi.master / 255.0;
+void animate_transform_apply(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *localbitmap) {
+    // fetch settings from main context
+    pthread_mutex_lock(&kntxt->lock);
 
-    if(kntxt->blackout)
+    double master = kntxt->midi.master / 255.0;
+    char blackout = kntxt->blackout;
+
+    pthread_mutex_unlock(&kntxt->lock);
+
+    // applying settings to frame
+    if(blackout)
         master = 0;
 
     for(int i = 0; i < LEDSTOTAL; i++) {
-        kntxt->pixels[i].r = (uint8_t) (kntxt->pixels[i].r * master);
-        kntxt->pixels[i].g = (uint8_t) (kntxt->pixels[i].g * master);
-        kntxt->pixels[i].b = (uint8_t) (kntxt->pixels[i].b * master);
-    }
-
-    if(kntxt->midi.channels[7].slider > 0) {
-        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
-
-    } else {
-        kntxt->speed = 50000;
+        localpixels[i].r = (uint8_t) (localpixels[i].r * master);
+        localpixels[i].g = (uint8_t) (localpixels[i].g * master);
+        localpixels[i].b = (uint8_t) (localpixels[i].b * master);
     }
 
     // building network frame bitmap
     for(int i = 0; i < LEDSTOTAL; i++) {
-        kntxt->bitmap[(i * 3) + 0] = kntxt->pixels[i].r;
-        kntxt->bitmap[(i * 3) + 1] = kntxt->pixels[i].g;
-        kntxt->bitmap[(i * 3) + 2] = kntxt->pixels[i].b;
+        localbitmap[(i * 3) + 0] = localpixels[i].r;
+        localbitmap[(i * 3) + 1] = localpixels[i].g;
+        localbitmap[(i * 3) + 2] = localpixels[i].b;
     }
 }
 
 void *thread_animate(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    kntxt->frame = loadframe(kntxt->presets[0]);
+
+    frame_t *xframe = frame_loadfile(kntxt->presets[0]);
+    kntxt->frame = xframe;
+    pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     int line = 0;
 
     while(1) {
+        // check for changes
         pthread_mutex_lock(&kntxt->lock);
-
-        // link frame to main frame
         frame_t *frame = kntxt->frame;
 
         for(int a = 0; a < LEDSTOTAL; a++) {
@@ -312,14 +312,19 @@ void *thread_animate(void *extra) {
                 .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
             };
 
-            kntxt->pixels[a] = target;
+            localpixels[a] = target;
         }
-
-        animate_transform_apply(kntxt);
-        useconds_t waiting = kntxt->speed;
 
         pthread_mutex_unlock(&kntxt->lock);
 
+
+        // commit this frame pixel to main context
+        pthread_mutex_lock(&kntxt->lock);
+        memcpy(kntxt->pixels, localpixels, sizeof(pixel_t) * LEDSTOTAL);
+        useconds_t waiting = kntxt->speed;
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // wait relative to speed for the next frame
         usleep(waiting);
 
         line += 1;
@@ -331,121 +336,10 @@ void *thread_animate(void *extra) {
 }
 
 //
-// midi management
+// network transmitter management
 //
-inline uint8_t midi_value_parser(uint8_t input) {
-    uint8_t parsed = input * 2;
-
-    if(input == 127)
-        return 255;
-
-    return parsed;
-}
-
-int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
-    // printf("[+] type: %d, ", ev->type);
-
-    // value from 0 -> 127
-    //
-    // channel 1: 16, 17, 18 // 19 -- mute 1, rec 3
-    // channel 2: 20, 21, 22 // 23 -- mute 4, rec 6
-    // channel 3: 24, 25, 26 // 27 -- mute 7, rec 9
-    // channel 4: 28, 29, 30 // 31 -- mute 10, rec 12
-    //
-    // channel 5: 46, 47, 48 // 49 -- mute 13, rec 15
-    // channel 6: 50, 51, 52 // 53 -- mute 16, rec 18
-    // channel 7: 54, 55, 56 // 57 -- mute 19, rec 21
-    // channel 8: 58, 59, 60 // 61 -- mute 22, rec 24
-    //
-    // master    : 62 -- solo note 27
-    // bank left : note 25
-    // bank right: note 26
-
-    unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
-    unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
-
-
-    if(ev->type == SND_SEQ_EVENT_NOTEON) {
-        // printf("noteon, note: %d", ev->data.note.note);
-
-        for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
-            if(presets[i] == ev->data.note.note) {
-                logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
-                // printf("\033[K\n");
-
-                pthread_mutex_lock(&kntxt->lock);
-
-                frame_t *frame = loadframe(kntxt->presets[i]);
-                kntxt->frame = frame;
-
-                pthread_mutex_unlock(&kntxt->lock);
-
-                // FIXME: cleanup, concurrence...
-
-                return 0;
-            }
-        }
-
-        pthread_mutex_lock(&kntxt->lock);
-
-        if(ev->data.note.note == 27) {
-            kntxt->blackout = kntxt->blackout ? 0 : 1;
-        }
-
-        pthread_mutex_unlock(&kntxt->lock);
-
-    }
-
-    if(ev->type == SND_SEQ_EVENT_NOTEOFF) {
-        // printf("noteoff, note: %d", ev->data.note.note);
-    }
-
-    if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
-        pthread_mutex_lock(&kntxt->lock);
-
-        for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
-            if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
-                if(ev->data.control.param == limlow[i])
-                    kntxt->midi.channels[i].high = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 1)
-                    kntxt->midi.channels[i].mid = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 2)
-                    kntxt->midi.channels[i].low = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 3)
-                    kntxt->midi.channels[i].slider = midi_value_parser(ev->data.control.value);
-
-            }
-
-            if(ev->data.control.param == 62)
-                kntxt->midi.master = midi_value_parser(ev->data.control.value);
-        }
-
-        pthread_mutex_unlock(&kntxt->lock);
-
-        // printf("controller, param: %d, value: %d", ev->data.control.param, ev->data.control.value);
-
-        /*
-        if(ev->data.control.param == 57)
-            univers[2] = ev->data.control.value * 2;
-        */
-
-    }
-
-    pthread_mutex_lock(&kntxt->lock);
-
-    // animate_transform_apply(kntxt);
-
-    pthread_mutex_unlock(&kntxt->lock);
-
-    // printf("\n");
-
-    return 0;
-}
-
-int netsend_transmit_frame(kntxt_t *kntxt) {
+// int netsend_transmit_frame(kntxt_t *kntxt, uint8_t *bitmap) {
+int netsend_transmit_frame(uint8_t *bitmap) {
     struct sockaddr_in serveraddr;
 
     char *hostname = "10.241.0.133";
@@ -470,12 +364,7 @@ int netsend_transmit_frame(kntxt_t *kntxt) {
     int serverlen = sizeof(serveraddr);
 
     // sending bitmap
-    pthread_mutex_lock(&kntxt->lock);
-
-    int n = sendto(sockfd, kntxt->bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
-    kntxt->client.frames += 1;
-
-    pthread_mutex_unlock(&kntxt->lock);
+    int n = sendto(sockfd, bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
 
     if(n < 0)
       diep("sendto");
@@ -490,14 +379,39 @@ void *thread_netsend(void *extra) {
 
     logger("[+] netsend: sending frames to controler");
 
+    pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    uint8_t *localbitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
+
     while(1) {
-        netsend_transmit_frame(kntxt);
+        // fetch current frame pixel from animate
+        pthread_mutex_lock(&kntxt->lock);
+        memcpy(localpixels, kntxt->pixels, sizeof(pixel_t) * LEDSTOTAL);
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // apply transformation
+        animate_transform_apply(kntxt, localpixels, localbitmap);
+
+        // commit transformation to monitor to see changes on console
+        pthread_mutex_lock(&kntxt->lock);
+        memcpy(kntxt->monitor, localpixels, sizeof(pixel_t) * LEDSTOTAL);
+        kntxt->client.frames += 1;
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // sending the frame to the controler
+        netsend_transmit_frame(localbitmap);
+
         usleep(50000);
     }
+
+    free(localpixels);
+    free(localbitmap);
 
     return NULL;
 }
 
+//
+// feedback management
+//
 void *thread_feedback(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     char message[1024];
@@ -550,6 +464,118 @@ void *thread_feedback(void *extra) {
     close(sock);
 
     return NULL;
+}
+
+//
+// midi management
+//
+inline uint8_t midi_value_parser(uint8_t input) {
+    uint8_t parsed = input * 2;
+
+    if(input == 127)
+        return 255;
+
+    return parsed;
+}
+
+int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
+    // printf("[+] type: %d, ", ev->type);
+
+    // value from 0 -> 127
+    //
+    // channel 1: 16, 17, 18 // 19 -- mute 1, rec 3
+    // channel 2: 20, 21, 22 // 23 -- mute 4, rec 6
+    // channel 3: 24, 25, 26 // 27 -- mute 7, rec 9
+    // channel 4: 28, 29, 30 // 31 -- mute 10, rec 12
+    //
+    // channel 5: 46, 47, 48 // 49 -- mute 13, rec 15
+    // channel 6: 50, 51, 52 // 53 -- mute 16, rec 18
+    // channel 7: 54, 55, 56 // 57 -- mute 19, rec 21
+    // channel 8: 58, 59, 60 // 61 -- mute 22, rec 24
+    //
+    // master    : 62 -- solo note 27
+    // bank left : note 25
+    // bank right: note 26
+
+    unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
+    unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
+
+
+    if(ev->type == SND_SEQ_EVENT_NOTEON) {
+        // printf("noteon, note: %d", ev->data.note.note);
+
+        for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
+            if(presets[i] == ev->data.note.note) {
+                logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
+                // printf("\033[K\n");
+
+                pthread_mutex_lock(&kntxt->lock);
+
+                frame_t *frame = frame_loadfile(kntxt->presets[i]);
+                kntxt->frame = frame;
+
+                pthread_mutex_unlock(&kntxt->lock);
+
+                // FIXME: cleanup, concurrence...
+
+                return 0;
+            }
+        }
+
+        pthread_mutex_lock(&kntxt->lock);
+
+        if(ev->data.note.note == 27) {
+            kntxt->blackout = kntxt->blackout ? 0 : 1;
+        }
+
+        pthread_mutex_unlock(&kntxt->lock);
+
+    }
+
+    if(ev->type == SND_SEQ_EVENT_NOTEOFF) {
+        // printf("noteoff, note: %d", ev->data.note.note);
+    }
+
+    if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
+        pthread_mutex_lock(&kntxt->lock);
+
+        for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
+            if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
+                if(ev->data.control.param == limlow[i])
+                    kntxt->midi.channels[i].high = midi_value_parser(ev->data.control.value);
+
+                if(ev->data.control.param == limlow[i] + 1)
+                    kntxt->midi.channels[i].mid = midi_value_parser(ev->data.control.value);
+
+                if(ev->data.control.param == limlow[i] + 2)
+                    kntxt->midi.channels[i].low = midi_value_parser(ev->data.control.value);
+
+                if(ev->data.control.param == limlow[i] + 3)
+                    kntxt->midi.channels[i].slider = midi_value_parser(ev->data.control.value);
+
+            }
+
+            if(ev->data.control.param == 62)
+                kntxt->midi.master = midi_value_parser(ev->data.control.value);
+        }
+
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // printf("controller, param: %d, value: %d", ev->data.control.param, ev->data.control.value);
+    }
+
+    pthread_mutex_lock(&kntxt->lock);
+
+    if(kntxt->midi.channels[7].slider > 0) {
+        kntxt->speed = (1000 * kntxt->midi.channels[7].slider);
+
+    } else {
+        kntxt->speed = 50000;
+    }
+
+    pthread_mutex_unlock(&kntxt->lock);
+
+    return 0;
 }
 
 void *thread_midi(void *extra) {
@@ -617,6 +643,9 @@ void *thread_midi(void *extra) {
     return NULL;
 }
 
+//
+// console management
+//
 void console_border_top(char *name) {
     int printed = printf("\033[1;30m┌──┤ \033[34m%s\033[30m ├", name);
 
@@ -682,7 +711,7 @@ void *thread_console(void *extra) {
 
             for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
                 int index = (line * PERSEGMENT) + pixel;
-                pixel_t *color = &kntxt->pixels[index];
+                pixel_t *color = &kntxt->monitor[index];
 
                 printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
             }
@@ -804,16 +833,19 @@ void *thread_console(void *extra) {
         pthread_mutex_unlock(&logs->lock);
         console_border_bottom();
 
-        usleep(20000);
+        usleep(40000);
     }
 
     return NULL;
 }
 
+//
+// initializer management
+//
 void cleanup(kntxt_t *kntxt) {
     // master cleaner to check memory sanity (with, eg. valgrind)
     free(kntxt->pixels);
-    free(kntxt->bitmap);
+    free(kntxt->monitor);
 
     for(int i = 0; i < LOGGER_SIZE; i++)
         free(mainlog.lines[i]);
@@ -842,13 +874,13 @@ int main(int argc, char *argv[]) {
     memset(kntxt, 0x00, sizeof(kntxt_t));
 
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
-    mainctx.bitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
+    mainctx.monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     mainctx.midi.lines = 8; // 8 channels
     mainctx.speed = 50000;
 
-    mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
+    mainctx.presets[1] = "/home/maxux/git/stageled/templates/segments.png";
     mainctx.presets[2] = "/home/maxux/git/stageled/templates/linear-solid.png";
     mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
     mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
