@@ -31,7 +31,7 @@
 #define CGOOD       "\033[1;32m"
 #define CWAIT(x)    "\033[1;37;44m" x CRST
 #define COK(x)      "\033[1;37;42m" x CRST
-#define CBAD(x)     "\033[1;37;41m" x CRST
+#define CBAD(x)     "\033[5m\033[1;37;41m" x CRST
 
 #define APC_COLOR_BLACK       0
 #define APC_COLOR_WHITE       3
@@ -994,9 +994,10 @@ void console_border_bottom() {
         printf("─");
     }
 
-    printf("┘\033[0m\n");
+    printf("┘\033[0m");
 }
 
+/*
 void console_border_single() {
     printf("\033[1;30m│\033[0m");
 }
@@ -1017,15 +1018,60 @@ void console_print_line(char *fmt, ...) {
     // (this is a workaround for including escape inside buffer)
     printf("\033[1;30m│\033[0m%s\n", buffer);
 }
+*/
+
+void console_cursor_move(int line, int col) {
+    printf("\033[%d;%df", line, col);
+}
+
+void console_pane_draw(char *title, int lines, int line, int col) {
+    console_cursor_move(line, col);
+    console_border_top(title);
+
+    for(int i = 0; i < lines; i++) {
+        console_cursor_move(line + i + 1, col);
+        printf("\033[1;30m│\033[0m%-*s\033[1;30m│\033[0m\r", PERSEGMENT + 3, " ");
+    }
+
+    console_cursor_move(line + lines + 1, col);
+    console_border_bottom();
+}
+
+void console_panes_refresh() {
+    // clean entire screen
+    printf("\033[2J\033[H");
+
+    // print panes
+    console_pane_draw("Pixel Monitor", 24, 1, 0);
+    console_pane_draw("MIDI Channels", 10, 27, 0);
+    console_pane_draw("Global Statistics", 8, 39, 0);
+    console_pane_draw("System Logger", 6, 49, 0);
+
+    console_pane_draw("Pixel Preview", 24, 1, 127);
+    console_pane_draw("Animation Presets", 10, 27, 127);
+    console_pane_draw("Image Masks", 10, 39, 127);
+}
+
+void console_pixels_draw(pixel_t *pixels, int shift) {
+    for(int line = 0; line < SEGMENTS; line++) {
+        console_cursor_move(line + 2, shift);
+        printf("\033[0m%2d ", line + 1);
+
+        for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
+            int index = (line * PERSEGMENT) + pixel;
+            pixel_t *color = &pixels[index];
+
+            printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
+        }
+    }
+}
 
 void *thread_console(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     logger_t *logs = &mainlog;
+    int upper = 0;
 
-    // printf("[+] preparing console for monitoring\n");
-    // usleep(5000000);
-
-    printf("\033[2J"); // clean entire screen
+    console_panes_refresh();
 
     while(1) {
         // preparing relative timing
@@ -1034,85 +1080,50 @@ void *thread_console(void *extra) {
 
         pthread_mutex_lock(&kntxt->lock);
 
-        printf("\033[H"); // cursor to home
-
         //
         // pixel dump
         //
-        console_border_top("Pixel Monitoring");
-
-        for(int line = 0; line < SEGMENTS; line++) {
-            printf("\033[1;30m│%2d ", line + 1);
-
-            for(int pixel = 0; pixel < PERSEGMENT; pixel++) {
-                int index = (line * PERSEGMENT) + pixel;
-                pixel_t *color = &kntxt->monitor[index];
-
-                printf("\033[38;2;%d;%d;%dm█", color->r, color->g, color->b);
-            }
-
-            printf("\033[1;30m│\n");
-        }
-
-        console_border_bottom();
+        // console_border_top("Pixel Monitoring");
+        console_pixels_draw(kntxt->monitor, 2);
+        console_pixels_draw(kntxt->preview, 128);
 
         //
         // midi values
         //
-        console_border_top("MIDI Channels");
+        printf("\033[0m");
+        upper = 28;
 
-        console_border_single();
-        printf(" HI ");
-        for(int i = 0; i < kntxt->midi.lines; i++)
-            printf("% 4d ", kntxt->midi.channels[i].high);
+        console_cursor_move(upper, 2);
 
-        printf("\n");
-
-        console_border_single();
-        printf(" MI ");
-        for(int i = 0; i < kntxt->midi.lines; i++)
-            printf("% 4d ", kntxt->midi.channels[i].mid);
-
-        printf("\n");
-
-        console_border_single();
-        printf(" LO ");
-        for(int i = 0; i < kntxt->midi.lines; i++)
-            printf("% 4d ", kntxt->midi.channels[i].low);
-
-        printf("\n");
-
-        console_print_line("\033[1;30m ──────────────────────────────────────────── ");
-
-        console_border_single();
-        printf(" SL ");
+        printf("Sliders: ");
         for(int i = 0; i < kntxt->midi.lines; i++)
             printf("% 4d ", kntxt->midi.channels[i].slider);
 
-        printf("\n");
-
         float speedfps = 1000000.0 / kntxt->speed;
 
-        console_print_line(" ");
+        console_cursor_move(upper + 1, 2);
         if(kntxt->blackout) {
-            console_print_line("Master: %3d %s", kntxt->midi.master, CBAD(" BLACKOUT ENABLED "));
+            printf("Master: %3d %s", kntxt->midi.master, CBAD(" BLACKOUT ENABLED "));
 
         } else {
-            console_print_line("Master: %3d", kntxt->midi.master);
+            printf("Master: %3d", kntxt->midi.master);
         }
 
-        console_print_line("Strobe: %3d [index %3d]", kntxt->strobe, kntxt->strobe_index);
-        console_print_line("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
-        console_print_line("");
-        console_print_line("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
-        console_print_line("Animating: %s", kntxt->preset);
+        console_cursor_move(upper + 2, 2);
+        printf("Strobe: %3d [index %3d]", kntxt->strobe, kntxt->strobe_index);
 
-        console_border_bottom();
+        console_cursor_move(upper + 3, 2);
+        printf("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
+
+        console_cursor_move(upper + 5, 2);
+        printf("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
+
+        console_cursor_move(upper + 6, 2);
+        printf("Animating: %s", kntxt->preset);
 
         //
         // controller and client statistics
         //
-        console_border_top("Statistics");
 
         control_stats_t *client = &kntxt->client;
         controller_stats_t *controller = &kntxt->controller;
@@ -1126,16 +1137,18 @@ void *thread_console(void *extra) {
         if(controller->state > 0 && lastping > 2.0)
             state = CBAD(" timed out ");
 
-        console_print_line("Controler: %s", state);
+        upper = 40;
+        console_cursor_move(upper, 2);
+        printf("Controler: %s", state);
 
+        console_cursor_move(upper + 1, 2);
         if(controller->state == 0) {
-            console_print_line("Last seen: %s", CWAIT(" waiting "));
+            printf("Last seen: %s", CWAIT(" waiting "));
 
         } else {
-            console_print_line("Last seen: %.2f seconds ago", lastping);
+            printf("Last seen: %.2f seconds ago", lastping);
         }
 
-        console_print_line("");
 
         // coloring fps
         char strfps[64];
@@ -1143,17 +1156,20 @@ void *thread_console(void *extra) {
         if(controller->fps < 20)
             sprintf(strfps, CWARN "%2lu fps" CRST, controller->fps);
 
-        console_print_line("Frames displayed: % 6lu, %s", client->showframes, strfps);
-        console_print_line("Frames committed: % 6lu, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
+        console_cursor_move(upper + 3, 2);
+        printf("Frames displayed: % 6lu, %s", client->showframes, strfps);
 
-        console_print_line("");
-        console_print_line("Controler uptime: %s", ctrlup);
-        console_print_line("Interface uptime: %s", sessup);
+        console_cursor_move(upper + 4, 2);
+        printf("Frames committed: % 6lu, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
+
+        console_cursor_move(upper + 6, 2);
+        printf("Controler uptime: %s", ctrlup);
+
+        console_cursor_move(upper + 7, 2);
+        printf("Interface uptime: %s", sessup);
 
         free(sessup);
         free(ctrlup);
-
-        console_border_bottom();
 
         // we are done with main context
         pthread_mutex_unlock(&kntxt->lock);
@@ -1161,11 +1177,12 @@ void *thread_console(void *extra) {
         //
         // last lines from logger (ring buffer)
         //
-        console_border_top("Logger");
+        // console_border_top("Logger");
         pthread_mutex_lock(&logs->lock);
 
         int show = 6;
         int index = logs->nextid - show;
+        upper = 50;
 
         for(int i = 0; i < show; i++) {
             int display = index;
@@ -1173,13 +1190,16 @@ void *thread_console(void *extra) {
             if(index < 0)
                 display = logs->capacity + index;
 
-            console_print_line("%s", logs->lines[display] ? logs->lines[display] : "");
+            console_cursor_move(upper + i, 2);
+            printf("%-*s", PERSEGMENT + 3, logs->lines[display] ? logs->lines[display] : "");
 
             index += 1;
         }
 
         pthread_mutex_unlock(&logs->lock);
-        console_border_bottom();
+
+        console_cursor_move(64, 0);
+        fflush(stdout);
 
         usleep(40000);
     }
