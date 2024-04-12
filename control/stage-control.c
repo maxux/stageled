@@ -607,8 +607,8 @@ void *thread_feedback(void *extra) {
     char message[1024], ctrladdr[32];
     struct sockaddr_in name;
     struct sockaddr_in client;
-    unsigned long clientaddr;
-    int clientlen;
+    unsigned long clientaddr = 0;
+    socklen_t clientlen = sizeof(client);
     int sock;
 
     if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -619,26 +619,18 @@ void *thread_feedback(void *extra) {
     name.sin_addr.s_addr = htonl(INADDR_ANY);
     name.sin_port = htons(1111);
 
-    // no previous client
-    // avoid initializing to zero (fake mismatch)
-    clientaddr = 1;
-
     if(bind(sock, (struct sockaddr *) &name, sizeof(name)) < 0)
         diep("feedback: bind");
 
     logger("[+] feedback: waiting for incoming packets");
 
     while(1) {
-        int bytes = recvfrom(sock, message, sizeof(message), 0, (struct sockaddr *) &client, (socklen_t *) &clientlen);
+        int bytes = recvfrom(sock, message, sizeof(message), 0, (struct sockaddr *) &client, &clientlen);
 
         if(bytes <= 0) {
             usleep(10000);
             continue;
         }
-
-        // FIXME: why first frame is not set correctly ?
-        if(client.sin_addr.s_addr == 0)
-            continue;
 
         pthread_mutex_lock(&kntxt->lock);
 
@@ -660,7 +652,7 @@ void *thread_feedback(void *extra) {
             logger("[+] feedback: relative frames: %lu, time: %lu", initial.frames, initial.time_current);
         }
 
-        if(clientaddr != client.sin_addr.s_addr && client.sin_addr.s_addr != 0) {
+        if(clientaddr != client.sin_addr.s_addr) {
             // save this address as last client address
             clientaddr = client.sin_addr.s_addr;
 
