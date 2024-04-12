@@ -137,6 +137,7 @@ typedef struct kntxt_t {
     // remote and local stats
     controler_stats_t controler;
     control_stats_t client;
+    char *controladdr;
 
     // flags to monitor interface presence
     uint8_t interface;
@@ -419,11 +420,10 @@ void *thread_presets(void *extra) {
 //
 // network transmitter management
 //
-// int netsend_transmit_frame(kntxt_t *kntxt, uint8_t *bitmap) {
-int netsend_transmit_frame(uint8_t *bitmap) {
+int netsend_transmit_frame(uint8_t *bitmap, char *target) {
     struct sockaddr_in serveraddr;
 
-    char *hostname = "10.241.0.133";
+    char *hostname = target;
     int portno = 1111;
 
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -445,9 +445,7 @@ int netsend_transmit_frame(uint8_t *bitmap) {
     int serverlen = sizeof(serveraddr);
 
     // sending bitmap
-    int n = sendto(sockfd, bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen);
-
-    if(n < 0)
+    if(sendto(sockfd, bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen) < 0)
       diep("sendto");
 
     close(sockfd);
@@ -554,6 +552,7 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
 
 void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
+    char *controladdr;
 
     logger("[+] netsend: sending frames to controler");
 
@@ -563,7 +562,10 @@ void *thread_netsend(void *extra) {
     while(1) {
         // fetch current frame pixel from animate
         pthread_mutex_lock(&kntxt->lock);
+
         memcpy(localpixels, kntxt->pixels, sizeof(pixel_t) * LEDSTOTAL);
+        controladdr = kntxt->controladdr;
+
         pthread_mutex_unlock(&kntxt->lock);
 
         // apply transformation
@@ -575,8 +577,9 @@ void *thread_netsend(void *extra) {
         kntxt->client.frames += 1;
         pthread_mutex_unlock(&kntxt->lock);
 
-        // sending the frame to the controler
-        netsend_transmit_frame(localbitmap);
+        // sending the frame to the controler (if alive)
+        if(controladdr)
+            netsend_transmit_frame(localbitmap, controladdr);
 
         usleep(1000000 / TARGET_FPS);
     }
@@ -592,29 +595,41 @@ void *thread_netsend(void *extra) {
 //
 void *thread_feedback(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    char message[1024];
+    char message[1024], ctrladdr[32];
     struct sockaddr_in name;
+    struct sockaddr_in client;
+    unsigned long clientaddr;
+    int clientlen;
+    int sock;
 
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if(sock < 0)
+    if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         diep("feedback: socket");
 
-    bzero((char *) &name, sizeof(name));
+    memset(&name, 0x00, sizeof(name));
     name.sin_family = AF_INET;
     name.sin_addr.s_addr = htonl(INADDR_ANY);
     name.sin_port = htons(1111);
 
-    if(bind(sock, (struct sockaddr *) &name, sizeof(name)))
+    // no previous client
+    // avoid initializing to zero (fake mismatch)
+    clientaddr = 1;
+
+    if(bind(sock, (struct sockaddr *) &name, sizeof(name)) < 0)
         diep("feedback: bind");
 
     logger("[+] feedback: waiting for incoming packets");
 
     while(1) {
-        int bytes = read(sock, message, sizeof(message));
+        int bytes = recvfrom(sock, message, sizeof(message), 0, (struct sockaddr *) &client, (socklen_t *) &clientlen);
+
         if(bytes <= 0) {
             usleep(10000);
             continue;
         }
+
+        // FIXME: why first frame is not set correctly ?
+        if(client.sin_addr.s_addr == 0)
+            continue;
 
         pthread_mutex_lock(&kntxt->lock);
 
@@ -634,6 +649,18 @@ void *thread_feedback(void *extra) {
             kntxt->client.ctrl_initial_time = initial.time_current;
 
             logger("[+] feedback: relative frames: %lu, time: %lu", initial.frames, initial.time_current);
+        }
+
+        if(clientaddr != client.sin_addr.s_addr && client.sin_addr.s_addr != 0) {
+            // save this address as last client address
+            clientaddr = client.sin_addr.s_addr;
+
+            inet_ntop(AF_INET, &client.sin_addr, ctrladdr, sizeof(ctrladdr));
+            logger("[+] feedback: received from: %s, updating", ctrladdr);
+
+            // linking this client to main network stack
+            free(kntxt->controladdr);
+            kntxt->controladdr = strdup(ctrladdr);
         }
 
         // make a lazy binary copy from controler
