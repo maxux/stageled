@@ -73,21 +73,16 @@ typedef struct pixel_t {
 
 } pixel_t;
 
-typedef struct channel_t {
-    uint8_t high;
-    uint8_t mid;
-    uint8_t low;
-    uint8_t slider;
-    uint8_t mute;
-    uint8_t rec;
+typedef struct slider_t {
+    uint8_t value;
 
-} channel_t;
+} slider_t;
 
 typedef struct transform_t {
     int lines;
-    channel_t channels[8];
+    slider_t *sliders;
+    uint8_t strip_rgb[3]; // strip red, green, blue
     uint8_t master;
-    uint8_t solo;
 
 } transform_t;
 
@@ -467,15 +462,15 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
     uint8_t strobe_state = kntxt->strobe_state;
 
     uint8_t colorize[] = {
-        kntxt->midi.channels[0].high,
-        kntxt->midi.channels[0].mid,
-        kntxt->midi.channels[0].low,
+        kntxt->midi.strip_rgb[0],
+        kntxt->midi.strip_rgb[1],
+        kntxt->midi.strip_rgb[2],
     };
 
     uint8_t segments[] = {
-        kntxt->midi.channels[0].slider,
-        kntxt->midi.channels[1].slider,
-        kntxt->midi.channels[2].slider,
+        kntxt->midi.sliders[0].value,
+        kntxt->midi.sliders[1].value,
+        kntxt->midi.sliders[2].value,
     };
 
     if(strobe)
@@ -519,14 +514,14 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
         }
     }
 
-    if(segments[0] || segments[1] || segments[2]) {
+    if(segments[0] < 255 || segments[1] < 255 || segments[2] < 255) {
         for(int segment = 0; segment < 3; segment++) {
-            float attenuation = (255 - segments[segment]) / 255.0;
+            float mul = segments[segment] / 255.0;
 
             for(int i = (segment * PERSEGMENT); i < ((segment + 1) * PERSEGMENT); i++) {
-                monitor[i].r = (uint8_t) (monitor[i].r * attenuation);
-                monitor[i].g = (uint8_t) (monitor[i].g * attenuation);
-                monitor[i].b = (uint8_t) (monitor[i].b * attenuation);
+                monitor[i].r = (uint8_t) (monitor[i].r * mul);
+                monitor[i].g = (uint8_t) (monitor[i].g * mul);
+                monitor[i].b = (uint8_t) (monitor[i].b * mul);
             }
         }
     }
@@ -756,44 +751,23 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
             } else {
                 kntxt->blackout = 0;
                 midi_set_control(seq, APC_SOLID_100, 0x07, APC_BLACKOUT_COLOR);
-
             }
         }
 
-        if(ev->data.note.note == 0) {
-            if(kntxt->midi.channels[0].high == 255) {
-                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_RED);
-                kntxt->midi.channels[0].high = 0;
+        // strip color note
+        int strip_colors[3] = {APC_COLOR_RED, APC_COLOR_GREEN, APC_COLOR_BLUE};
+        if(ev->data.note.note < 3) { // >= 0 not needed, unsigned
+            if(kntxt->midi.strip_rgb[ev->data.note.note]) {
+                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, strip_colors[ev->data.note.note]);
+                kntxt->midi.strip_rgb[ev->data.note.note] = 0;
 
             } else {
-                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_RED);
-                kntxt->midi.channels[0].high = 255;
+                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, strip_colors[ev->data.note.note]);
+                kntxt->midi.strip_rgb[ev->data.note.note] = 255;
             }
         }
 
-        if(ev->data.note.note == 1) {
-            if(kntxt->midi.channels[0].mid == 255) {
-                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_GREEN);
-                kntxt->midi.channels[0].mid = 0;
-
-            } else {
-                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_GREEN);
-                kntxt->midi.channels[0].mid = 255;
-            }
-        }
-
-        if(ev->data.note.note == 2) {
-            if(kntxt->midi.channels[0].low == 255) {
-                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_BLUE);
-                kntxt->midi.channels[0].low = 0;
-
-            } else {
-                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_BLUE);
-                kntxt->midi.channels[0].low = 255;
-            }
-        }
-
-
+        // segment configuration
         if(ev->data.note.note == 100)
             logger("[+] midi: configure segments 1");
 
@@ -819,28 +793,8 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
 
         pthread_mutex_lock(&kntxt->lock);
 
-        /*
-        for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
-            if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
-                if(ev->data.control.param == limlow[i])
-                    kntxt->midi.channels[i].high = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 1)
-                    kntxt->midi.channels[i].mid = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 2)
-                    kntxt->midi.channels[i].low = midi_value_parser(ev->data.control.value);
-
-                if(ev->data.control.param == limlow[i] + 3)
-                    kntxt->midi.channels[i].slider = midi_value_parser(ev->data.control.value);
-
-            }
-
-        }
-        */
-
         if(ev->data.control.param > 47 && ev->data.control.param < 56)
-            kntxt->midi.channels[ev->data.control.param - 48].slider = midi_value_parser(ev->data.control.value);
+            kntxt->midi.sliders[ev->data.control.param - 48].value = midi_value_parser(ev->data.control.value);
 
         // master channel
         if(ev->data.control.param == 56)
@@ -851,15 +805,15 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
 
     pthread_mutex_lock(&kntxt->lock);
 
-    if(kntxt->midi.channels[7].slider > 0) {
-        kntxt->speed = (1000000 / kntxt->midi.channels[7].slider);
+    if(kntxt->midi.sliders[7].value > 0) {
+        kntxt->speed = (1000000 / kntxt->midi.sliders[7].value);
 
     } else {
         kntxt->speed = 1000000 / TARGET_FPS;
     }
 
     // apply strobe value
-    kntxt->strobe = kntxt->midi.channels[6].slider;
+    kntxt->strobe = kntxt->midi.sliders[6].value;
     if(kntxt->strobe == 0) {
         kntxt->strobe_index = 0;
         kntxt->strobe_state = 0;
@@ -1089,7 +1043,7 @@ void *thread_console(void *extra) {
 
         printf("Sliders: ");
         for(int i = 0; i < kntxt->midi.lines; i++)
-            printf("% 4d ", kntxt->midi.channels[i].slider);
+            printf("% 4d ", kntxt->midi.sliders[i].value);
 
         float speedfps = 1000000.0 / kntxt->speed;
 
@@ -1238,6 +1192,7 @@ int main(int argc, char *argv[]) {
     mainctx.preview = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     mainctx.midi.lines = 8; // 8 channels
+    mainctx.midi.sliders = calloc(sizeof(slider_t), mainctx.midi.lines);
     mainctx.speed = 1000000 / TARGET_FPS;
 
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
