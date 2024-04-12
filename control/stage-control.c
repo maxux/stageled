@@ -123,6 +123,7 @@ typedef struct control_stats_t {
 typedef struct kntxt_t {
     pixel_t *pixels;
     pixel_t *monitor; // monitoring output
+    pixel_t *preview; // monitoring without master
 
     frame_t *frame;
     transform_t midi;
@@ -454,7 +455,7 @@ int netsend_transmit_frame(uint8_t *bitmap, char *target) {
     return 0;
 }
 
-void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *localbitmap) {
+void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview, uint8_t *localbitmap) {
     // fetch settings from main context
     pthread_mutex_lock(&kntxt->lock);
 
@@ -503,15 +504,18 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
 
     pthread_mutex_unlock(&kntxt->lock);
 
+    // copy current state to preview, which is monitor without master applied
+    memcpy(preview, monitor, sizeof(pixel_t) * LEDSTOTAL);
+
     if(colorize[0] || colorize[1] || colorize[2]) {
         float redmul = (255 - colorize[0]) / 255.0;
         float greenmul = (255 - colorize[1]) / 255.0;
         float bluemul = (255 - colorize[2]) / 255.0;
 
         for(int i = 0; i < LEDSTOTAL; i++) {
-            localpixels[i].r = (uint8_t) (localpixels[i].r * redmul);
-            localpixels[i].g = (uint8_t) (localpixels[i].g * greenmul);
-            localpixels[i].b = (uint8_t) (localpixels[i].b * bluemul);
+            monitor[i].r = (uint8_t) (monitor[i].r * redmul);
+            monitor[i].g = (uint8_t) (monitor[i].g * greenmul);
+            monitor[i].b = (uint8_t) (monitor[i].b * bluemul);
         }
     }
 
@@ -520,9 +524,9 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
             float attenuation = (255 - segments[segment]) / 255.0;
 
             for(int i = (segment * PERSEGMENT); i < ((segment + 1) * PERSEGMENT); i++) {
-                localpixels[i].r = (uint8_t) (localpixels[i].r * attenuation);
-                localpixels[i].g = (uint8_t) (localpixels[i].g * attenuation);
-                localpixels[i].b = (uint8_t) (localpixels[i].b * attenuation);
+                monitor[i].r = (uint8_t) (monitor[i].r * attenuation);
+                monitor[i].g = (uint8_t) (monitor[i].g * attenuation);
+                monitor[i].b = (uint8_t) (monitor[i].b * attenuation);
             }
         }
     }
@@ -532,22 +536,22 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *localpixels, uint8_t *loc
         double master = rawmaster / 255.0;
 
         for(int i = 0; i < LEDSTOTAL; i++) {
-            localpixels[i].r = (uint8_t) (localpixels[i].r * master);
-            localpixels[i].g = (uint8_t) (localpixels[i].g * master);
-            localpixels[i].b = (uint8_t) (localpixels[i].b * master);
+            monitor[i].r = (uint8_t) (monitor[i].r * master);
+            monitor[i].g = (uint8_t) (monitor[i].g * master);
+            monitor[i].b = (uint8_t) (monitor[i].b * master);
         }
     }
 
     if(rawmaster == 0) {
         // force setting all pixels to zero in a more efficient way
-        memset(localpixels, 0x00, sizeof(pixel_t) * LEDSTOTAL);
+        memset(monitor, 0x00, sizeof(pixel_t) * LEDSTOTAL);
     }
 
     // building network frame bitmap
     for(int i = 0; i < LEDSTOTAL; i++) {
-        localbitmap[(i * 3) + 0] = localpixels[i].r;
-        localbitmap[(i * 3) + 1] = localpixels[i].g;
-        localbitmap[(i * 3) + 2] = localpixels[i].b;
+        localbitmap[(i * 3) + 0] = monitor[i].r;
+        localbitmap[(i * 3) + 1] = monitor[i].g;
+        localbitmap[(i * 3) + 2] = monitor[i].b;
     }
 }
 
@@ -557,24 +561,27 @@ void *thread_netsend(void *extra) {
 
     logger("[+] netsend: sending frames to controller");
 
-    pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    pixel_t *monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL); // live copy
+    pixel_t *preview = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL); // always visible copy
+
     uint8_t *localbitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
 
     while(1) {
         // fetch current frame pixel from animate
         pthread_mutex_lock(&kntxt->lock);
 
-        memcpy(localpixels, kntxt->pixels, sizeof(pixel_t) * LEDSTOTAL);
+        memcpy(monitor, kntxt->pixels, sizeof(pixel_t) * LEDSTOTAL);
         controladdr = kntxt->controladdr;
 
         pthread_mutex_unlock(&kntxt->lock);
 
         // apply transformation
-        netsend_pixels_transform(kntxt, localpixels, localbitmap);
+        netsend_pixels_transform(kntxt, monitor, preview, localbitmap);
 
         // commit transformation to monitor to see changes on console
         pthread_mutex_lock(&kntxt->lock);
-        memcpy(kntxt->monitor, localpixels, sizeof(pixel_t) * LEDSTOTAL);
+        memcpy(kntxt->monitor, monitor, sizeof(pixel_t) * LEDSTOTAL);
+        memcpy(kntxt->preview, preview, sizeof(pixel_t) * LEDSTOTAL);
         kntxt->client.frames += 1;
         pthread_mutex_unlock(&kntxt->lock);
 
@@ -585,7 +592,8 @@ void *thread_netsend(void *extra) {
         usleep(1000000 / TARGET_FPS);
     }
 
-    free(localpixels);
+    free(monitor);
+    free(preview);
     free(localbitmap);
 
     return NULL;
@@ -1215,6 +1223,7 @@ int main(int argc, char *argv[]) {
 
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    mainctx.preview = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     mainctx.midi.lines = 8; // 8 channels
     mainctx.speed = 1000000 / TARGET_FPS;
