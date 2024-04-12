@@ -32,6 +32,36 @@
 #define COK(x)      "\033[1;37;42m" x CRST
 #define CBAD(x)     "\033[1;37;41m" x CRST
 
+#define APC_COLOR_BLACK       0
+#define APC_COLOR_WHITE       3
+#define APC_COLOR_RED         5
+#define APC_COLOR_GREEN       21
+#define APC_COLOR_BLUE        45
+#define APC_COLOR_YELLOW      13
+#define APC_COLOR_LIGHT_BLUE  36
+#define APC_COLOR_PURPLE      53
+
+#define APC_BLACKOUT_COLOR    APC_COLOR_WHITE
+
+#define APC_SOLID_10          0x90
+#define APC_SOLID_25          0x91
+#define APC_SOLID_50          0x92
+#define APC_SOLID_65          0x93
+#define APC_SOLID_75          0x94
+#define APC_SOLID_90          0x95
+#define APC_SOLID_100         0x96
+
+#define APC_PULSE_1_16        0x97
+#define APC_PULSE_1_8         0x98
+#define APC_PULSE_1_4         0x99
+#define APC_PULSE_1_2         0x9A
+
+#define APC_BLINK_1_24        0x9B
+#define APC_BLINK_1_16        0x9C
+#define APC_BLINK_1_8         0x9D
+#define APC_BLINK_1_4         0x9E
+#define APC_BLINK_1_2         0x9F
+
 //
 // global context
 //
@@ -635,31 +665,44 @@ inline uint8_t midi_value_parser(uint8_t input) {
     return parsed;
 }
 
-int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
-    // printf("[+] type: %d, ", ev->type);
+void midi_set_control(snd_seq_t *seq, uint8_t mode, uint8_t button, uint8_t value) {
+    snd_seq_event_t ev;
 
-    // value from 0 -> 127
+    snd_seq_ev_clear(&ev);
+    snd_seq_ev_set_source(&ev, 0);
+    snd_seq_ev_set_subs(&ev);
+    snd_seq_ev_set_direct(&ev);
+
+    ev.type = SND_SEQ_EVENT_NOTEON;
+    ev.data.note.channel = mode;
+    ev.data.note.note = button;
+    ev.data.note.velocity = value;
+
+    snd_seq_event_output(seq, &ev);
+    snd_seq_drain_output(seq);
+}
+
+int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq) {
+    // logger("[+] midi type: %d", ev->type);
+
+    // matrix: 0 -> 63
+    // from bottom left to top right
     //
-    // channel 1: 16, 17, 18 // 19 -- mute 1, rec 3
-    // channel 2: 20, 21, 22 // 23 -- mute 4, rec 6
-    // channel 3: 24, 25, 26 // 27 -- mute 7, rec 9
-    // channel 4: 28, 29, 30 // 31 -- mute 10, rec 12
+    // volume, pan, send, ...
+    // 100 -> 107
     //
-    // channel 5: 46, 47, 48 // 49 -- mute 13, rec 15
-    // channel 6: 50, 51, 52 // 53 -- mute 16, rec 18
-    // channel 7: 54, 55, 56 // 57 -- mute 19, rec 21
-    // channel 8: 58, 59, 60 // 61 -- mute 22, rec 24
+    // shift: 122
     //
-    // master    : 62 -- solo note 27
-    // bank left : note 25
-    // bank right: note 26
+    // clip stop, solo, mute, ...
+    // 112 -> 119
+    //
+    // faders: 48 -> 56
 
     unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
     unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
 
-
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
-        // printf("noteon, note: %d", ev->data.note.note);
+        logger("[+] midi: note on, note: %d", ev->data.note.note);
 
         for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
             if(presets[i] == ev->data.note.note) {
@@ -677,9 +720,63 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
         pthread_mutex_lock(&kntxt->lock);
 
-        if(ev->data.note.note == 27) {
-            kntxt->blackout = kntxt->blackout ? 0 : 1;
+        if(ev->data.note.note == 7) {
+            if(kntxt->blackout == 0) {
+                kntxt->blackout = 1;
+                midi_set_control(seq, APC_BLINK_1_24, 0x07, APC_BLACKOUT_COLOR);
+
+            } else {
+                kntxt->blackout = 0;
+                midi_set_control(seq, APC_SOLID_100, 0x07, APC_BLACKOUT_COLOR);
+
+            }
         }
+
+        if(ev->data.note.note == 0) {
+            if(kntxt->midi.channels[0].high == 255) {
+                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_RED);
+                kntxt->midi.channels[0].high = 0;
+
+            } else {
+                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_RED);
+                kntxt->midi.channels[0].high = 255;
+            }
+        }
+
+        if(ev->data.note.note == 1) {
+            if(kntxt->midi.channels[0].mid == 255) {
+                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_GREEN);
+                kntxt->midi.channels[0].mid = 0;
+
+            } else {
+                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_GREEN);
+                kntxt->midi.channels[0].mid = 255;
+            }
+        }
+
+        if(ev->data.note.note == 2) {
+            if(kntxt->midi.channels[0].low == 255) {
+                midi_set_control(seq, APC_SOLID_100, ev->data.note.note, APC_COLOR_BLUE);
+                kntxt->midi.channels[0].low = 0;
+
+            } else {
+                midi_set_control(seq, APC_BLINK_1_8, ev->data.note.note, APC_COLOR_BLUE);
+                kntxt->midi.channels[0].low = 255;
+            }
+        }
+
+
+        if(ev->data.note.note == 100)
+            logger("[+] midi: configure segments 1");
+
+        if(ev->data.note.note == 101)
+            logger("[+] midi: configure segments 2");
+
+        if(ev->data.note.note == 102)
+            logger("[+] midi: configure segments 3");
+
+        if(ev->data.note.note == 103)
+            logger("[+] midi: configure segments 4");
 
         pthread_mutex_unlock(&kntxt->lock);
 
@@ -690,8 +787,11 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
     }
 
     if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
+        // logger("[+] midi: fader: param: %d, value: %d", ev->data.control.param, ev->data.control.value);
+
         pthread_mutex_lock(&kntxt->lock);
 
+        /*
         for(unsigned int i = 0; i < sizeof(limlow) / sizeof(int); i++) {
             if(ev->data.control.param >= limlow[i] && ev->data.control.param < limlow[i] + 4) {
                 if(ev->data.control.param == limlow[i])
@@ -708,14 +808,17 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt) {
 
             }
 
-            // master channel
-            if(ev->data.control.param == 62)
-                kntxt->midi.master = midi_value_parser(ev->data.control.value);
         }
+        */
+
+        if(ev->data.control.param > 47 && ev->data.control.param < 56)
+            kntxt->midi.channels[ev->data.control.param - 48].slider = midi_value_parser(ev->data.control.value);
+
+        // master channel
+        if(ev->data.control.param == 56)
+            kntxt->midi.master = midi_value_parser(ev->data.control.value);
 
         pthread_mutex_unlock(&kntxt->lock);
-
-        // printf("controller, param: %d, value: %d", ev->data.control.param, ev->data.control.value);
     }
 
     pthread_mutex_lock(&kntxt->lock);
@@ -749,20 +852,20 @@ void *thread_midi(void *extra) {
     if((err = snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0)) < 0)
         diea("open: sequencer", err);
 
-    if((err = snd_seq_set_client_name(seq, "mididmx")) < 0)
+    if((err = snd_seq_set_client_name(seq, "midi-dmx")) < 0)
         diea("client: set name", err);
 
     int caps = SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE;
     int type = SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION;
 
-    if((err = snd_seq_create_simple_port(seq, "mididmx", caps, type)) < 0)
+    if((err = snd_seq_create_simple_port(seq, "midi-dmx", caps, type)) < 0)
         diea("create: simple port", err);
 
     if(!(ports = calloc(sizeof(snd_seq_addr_t), 1)))
         diep("ports: calloc");
 
     // hardcoded keyboard port
-    if((err = snd_seq_parse_address(seq, &ports[0], "MIDI Mix")) < 0) {
+    if((err = snd_seq_parse_address(seq, &ports[0], "APC mini mk2")) < 0) {
         kntxt->midi.master = 255;
         logger("[-] midi: parse address: %s", snd_strerror(err));
         return NULL;
@@ -770,8 +873,12 @@ void *thread_midi(void *extra) {
 
     if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
         kntxt->midi.master = 255;
-        logger("[-] midi: connect: %s", snd_strerror(err));
+        logger("[-] midi: connect from: %s", snd_strerror(err));
         return NULL;
+    }
+
+    if((err = snd_seq_connect_to(seq, 0, ports[0].client, ports[0].port)) < 0) {
+        logger("[-] midi: connect to: %s", snd_strerror(err));
     }
 
     struct pollfd *pfds;
@@ -781,7 +888,34 @@ void *thread_midi(void *extra) {
     pfds = alloca(sizeof(*pfds) * npfds);
 
     kntxt->interface = 1;
-    logger("[+] midi: interface connected");
+    logger("[+] midi: interface connected, initializing");
+
+    // reset all leds
+    for(int i = 0; i < 64; i++)
+        midi_set_control(seq, APC_SOLID_10, i, APC_COLOR_BLACK);
+
+    for(int i = 0x64; i < 0x6b; i++)
+        midi_set_control(seq, APC_SOLID_10, i, APC_COLOR_BLACK);
+
+    for(int i = 0x70; i < 0x7a; i++)
+        midi_set_control(seq, APC_SOLID_10, i, APC_COLOR_BLACK);
+
+    // set blackout default
+    midi_set_control(seq, APC_SOLID_100, 0x07, APC_BLACKOUT_COLOR);
+
+    // set red, green, blue channel cut
+    midi_set_control(seq, APC_SOLID_100, 0x00, APC_COLOR_RED);
+    midi_set_control(seq, APC_SOLID_100, 0x01, APC_COLOR_GREEN);
+    midi_set_control(seq, APC_SOLID_100, 0x02, APC_COLOR_BLUE);
+
+    // set presets colors
+    for(int i = 0x38; i < 0x40; i++)
+        midi_set_control(seq, APC_SOLID_100, i, APC_COLOR_YELLOW);
+
+    // set initial preset
+    midi_set_control(seq, APC_PULSE_1_4, 0x38, APC_COLOR_YELLOW);
+
+    logger("[+] midi: interface initialized");
 
     // polling events
     while(1) {
@@ -795,7 +929,7 @@ void *thread_midi(void *extra) {
             if(!event)
                 continue;
 
-           midi_handle_event(event, kntxt);
+           midi_handle_event(event, kntxt, seq);
         }
     }
 
