@@ -1041,7 +1041,7 @@ void console_panes_refresh() {
 
     console_pane_draw("Pixel Preview", 24, 1, 127);
     console_pane_draw("Animation Presets", 10, 27, 127);
-    console_pane_draw("Image Masks", 10, 39, 127);
+    console_pane_draw("Animation Masks", 10, 39, 127);
 }
 
 void console_pixels_draw(pixel_t *pixels, int shift) {
@@ -1149,10 +1149,10 @@ void *thread_console(void *extra) {
             sprintf(strfps, CWARN "%2lu fps" CRST, controller->fps);
 
         console_cursor_move(upper + 3, 2);
-        printf("Frames displayed: % 6lu, %s", client->showframes, strfps);
+        printf("Frames displayed: % 6ld, %s", client->showframes, strfps);
 
         console_cursor_move(upper + 4, 2);
-        printf("Frames committed: % 6lu, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
+        printf("Frames committed: % 6ld, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
 
         console_cursor_move(upper + 6, 2);
         printf("Controler uptime: %s", ctrlup);
@@ -1190,7 +1190,7 @@ void *thread_console(void *extra) {
 
         pthread_mutex_unlock(&logs->lock);
 
-        console_cursor_move(64, 0);
+        console_cursor_move(58, 0);
         fflush(stdout);
 
         usleep(40000);
