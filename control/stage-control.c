@@ -2,16 +2,17 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
-#include <sys/time.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/time.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <png.h>
@@ -98,7 +99,7 @@ typedef struct frame_t {
 
 } frame_t;
 
-typedef struct controler_stats_t {
+typedef struct controller_stats_t {
     uint64_t state;
     uint64_t old_frames;
     uint64_t frames;
@@ -106,7 +107,7 @@ typedef struct controler_stats_t {
     uint64_t time_last_frame;
     uint64_t time_current;
 
-} controler_stats_t;
+} controller_stats_t;
 
 typedef struct control_stats_t {
     uint64_t frames;
@@ -135,7 +136,7 @@ typedef struct kntxt_t {
     char *preset;
 
     // remote and local stats
-    controler_stats_t controler;
+    controller_stats_t controller;
     control_stats_t client;
     char *controladdr;
 
@@ -554,7 +555,7 @@ void *thread_netsend(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     char *controladdr;
 
-    logger("[+] netsend: sending frames to controler");
+    logger("[+] netsend: sending frames to controller");
 
     pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     uint8_t *localbitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
@@ -577,7 +578,7 @@ void *thread_netsend(void *extra) {
         kntxt->client.frames += 1;
         pthread_mutex_unlock(&kntxt->lock);
 
-        // sending the frame to the controler (if alive)
+        // sending the frame to the controller (if alive)
         if(controladdr)
             netsend_transmit_frame(localbitmap, controladdr);
 
@@ -633,12 +634,12 @@ void *thread_feedback(void *extra) {
 
         pthread_mutex_lock(&kntxt->lock);
 
-        if(kntxt->controler.time_current == 0) {
-            logger("[+] feedback: first message received from the controler");
+        if(kntxt->controller.time_current == 0) {
+            logger("[+] feedback: first message received from the controller");
 
             // save a copy of initial message to be able
             // to compute relative counters
-            controler_stats_t initial;
+            controller_stats_t initial;
             memcpy(&initial, message, bytes);
 
             // resetting internal frames counter
@@ -663,11 +664,11 @@ void *thread_feedback(void *extra) {
             kntxt->controladdr = strdup(ctrladdr);
         }
 
-        // make a lazy binary copy from controler
-        memcpy(&kntxt->controler, message, bytes);
+        // make a lazy binary copy from controller
+        memcpy(&kntxt->controller, message, bytes);
         gettimeofday(&kntxt->client.ctrl_last_feedback, NULL);
 
-        kntxt->client.showframes = (kntxt->controler.frames - kntxt->client.ctrl_initial_frames);
+        kntxt->client.showframes = (kntxt->controller.frames - kntxt->client.ctrl_initial_frames);
         kntxt->client.dropped = kntxt->client.frames - kntxt->client.showframes;
         if(kntxt->client.frames)
             kntxt->client.droprate = (kntxt->client.dropped / (double) kntxt->client.frames) * 100;
@@ -725,7 +726,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
     //
     // faders: 48 -> 56
 
-    unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
+    // unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
     unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
 
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
@@ -1101,25 +1102,25 @@ void *thread_console(void *extra) {
         console_border_bottom();
 
         //
-        // controler and client statistics
+        // controller and client statistics
         //
         console_border_top("Statistics");
 
         control_stats_t *client = &kntxt->client;
-        controler_stats_t *controler = &kntxt->controler;
+        controller_stats_t *controller = &kntxt->controller;
 
         double lastping = timediff(&now, &client->ctrl_last_feedback);
 
-        char *sessup = uptime_prettify(controler->time_current - client->ctrl_initial_time);
-        char *ctrlup = uptime_prettify(controler->time_current);
+        char *sessup = uptime_prettify(controller->time_current - client->ctrl_initial_time);
+        char *ctrlup = uptime_prettify(controller->time_current);
 
-        char *state = (controler->state == 0) ? CWAIT(" waiting ") : COK(" online ");
-        if(controler->state > 0 && lastping > 2.0)
+        char *state = (controller->state == 0) ? CWAIT(" waiting ") : COK(" online ");
+        if(controller->state > 0 && lastping > 2.0)
             state = CBAD(" timed out ");
 
         console_print_line("Controler: %s", state);
 
-        if(controler->state == 0) {
+        if(controller->state == 0) {
             console_print_line("Last seen: %s", CWAIT(" waiting "));
 
         } else {
@@ -1130,9 +1131,9 @@ void *thread_console(void *extra) {
 
         // coloring fps
         char strfps[64];
-        sprintf(strfps, CGOOD "%2lu fps" CRST, controler->fps);
-        if(controler->fps < 20)
-            sprintf(strfps, CWARN "%2lu fps" CRST, controler->fps);
+        sprintf(strfps, CGOOD "%2lu fps" CRST, controller->fps);
+        if(controller->fps < 20)
+            sprintf(strfps, CWARN "%2lu fps" CRST, controller->fps);
 
         console_print_line("Frames displayed: % 6lu, %s", client->showframes, strfps);
         console_print_line("Frames committed: % 6lu, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
@@ -1238,7 +1239,7 @@ int main(int argc, char *argv[]) {
     if(pthread_create(&netsend, NULL, thread_netsend, kntxt))
         perror("thread: netsend");
 
-    printf("[+] starting controler feedback thread\n");
+    printf("[+] starting controller feedback thread\n");
     if(pthread_create(&feedback, NULL, thread_feedback, kntxt))
         perror("thread: feedback");
 
