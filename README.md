@@ -6,9 +6,9 @@ Stage LED is a project for stage lighting. Initial and current project is contro
 This make a total of `2,880 LEDs`. To control all of this, a `Teensy 4.1` control
 `3 lanes` of `960 LEDs` at more than `30 FPS`. Teensy receives frame from a client over `Ethernet (UDP)`.
 
-# Controler
+# Controller
 
-Controler is a Teensy 4.1 with Ethernet.
+Controller is a `Teensy 4.1`  with Ethernet.
 
 # Client Control
 
