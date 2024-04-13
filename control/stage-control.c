@@ -43,6 +43,8 @@
 #define APC_COLOR_PURPLE      53
 
 #define APC_BLACKOUT_COLOR    APC_COLOR_WHITE
+#define APC_PRESETS_COLOR     APC_COLOR_YELLOW
+#define APC_MASKS_COLOR       APC_COLOR_PURPLE
 
 #define APC_SOLID_10          0x90
 #define APC_SOLID_25          0x91
@@ -89,6 +91,9 @@ typedef struct transform_t {
     uint8_t strip_rgb[3]; // strip red, green, blue
     uint8_t master;
 
+    uint8_t *presets;
+    uint8_t *masks;
+
 } transform_t;
 
 typedef struct frame_t {
@@ -133,8 +138,13 @@ typedef struct kntxt_t {
     uint8_t strobe_state;
     uint32_t strobe_index;
 
-    char *presets[8];
+    char **presets;
+    int presets_total;
+    char **masks;
+    int masks_total;
+
     char *preset;
+    char *mask;
 
     // remote and local stats
     controller_stats_t controller;
@@ -881,6 +891,28 @@ void *thread_midi(void *extra) {
     kntxt->interface = 1;
     logger("[+] midi: interface connected, initializing");
 
+    //
+    // presets
+    //
+    uint8_t hardcode_presets[] = {
+        0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    };
+
+    memcpy(kntxt->midi.presets, &hardcode_presets, sizeof(hardcode_presets));
+
+    //
+    // masks
+    //
+    uint8_t hardcode_masks[] = {
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    };
+
+    memcpy(kntxt->midi.masks, &hardcode_masks, sizeof(hardcode_masks));
+
     // reset all leds
     for(int i = 0; i < 64; i++)
         midi_set_control(seq, APC_SOLID_10, i, APC_COLOR_BLACK);
@@ -899,9 +931,15 @@ void *thread_midi(void *extra) {
     midi_set_control(seq, APC_SOLID_100, 0x01, APC_COLOR_GREEN);
     midi_set_control(seq, APC_SOLID_100, 0x02, APC_COLOR_BLUE);
 
-    // set presets colors
-    for(int i = 0x38; i < 0x40; i++)
-        midi_set_control(seq, APC_SOLID_100, i, APC_COLOR_YELLOW);
+    // set presets pad colors
+    for(int i = 0; i < kntxt->presets_total; i++)
+        if(kntxt->presets[i])
+            midi_set_control(seq, APC_SOLID_100, kntxt->midi.presets[i], APC_PRESETS_COLOR);
+
+    // set masks pad colors
+    for(int i = 0; i < kntxt->masks_total; i++)
+        if(kntxt->masks[i])
+            midi_set_control(seq, APC_SOLID_100, kntxt->midi.masks[i], APC_MASKS_COLOR);
 
     // set initial preset
     midi_set_control(seq, APC_PULSE_1_4, 0x38, APC_COLOR_YELLOW);
@@ -1204,6 +1242,14 @@ int main(int argc, char *argv[]) {
     mainctx.midi.sliders = calloc(sizeof(slider_t), mainctx.midi.lines);
     mainctx.speed = 1000000 / TARGET_FPS;
 
+    mainctx.presets_total = 24;
+    mainctx.masks_total = 24;
+
+    mainctx.presets = calloc(sizeof(char *), mainctx.presets_total);
+    mainctx.masks = calloc(sizeof(char *), mainctx.masks_total);
+    mainctx.midi.presets = calloc(sizeof(uint8_t), mainctx.presets_total);
+    mainctx.midi.masks = calloc(sizeof(uint8_t), mainctx.masks_total);
+
     mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
     mainctx.presets[1] = "/home/maxux/git/stageled/templates/kermesse.png";
     mainctx.presets[2] = "/home/maxux/git/stageled/templates/spectre3.png";
@@ -1212,7 +1258,12 @@ int main(int argc, char *argv[]) {
     mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
     mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
     mainctx.presets[7] = "/home/maxux/git/stageled/templates/full.png";
+    mainctx.presets[8] = "/home/maxux/git/stageled/templates/linear-solid.png";
+    mainctx.presets[9] = "/home/maxux/git/stageled/templates/rainbow.png";
     mainctx.preset = mainctx.presets[0];
+
+    mainctx.masks[0] = "/home/maxux/git/stageled/templates/mask-diagonal.png";
+    mainctx.masks[1] = "/home/maxux/git/stageled/templates/mask-hole.png";
 
     // loading default frame
     mainctx.frame = frame_loadfile(mainctx.preset);
