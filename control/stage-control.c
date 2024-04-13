@@ -739,14 +739,18 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
     //
     // faders: 48 -> 56
 
-    // unsigned int limlow[] = {16, 20, 24, 28, 46, 50, 54, 58};
-    unsigned int presets[] = {3, 6, 9, 12, 15, 18, 21, 24};
+    // FIXME: use local copy, not main object
+    uint8_t *presets = kntxt->midi.presets;
 
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
-        logger("[+] midi: note on, note: %d", ev->data.note.note);
+        // logger("[+] midi: note on, note: %d", ev->data.note.note);
 
-        for(unsigned int i = 0; i < sizeof(presets) / sizeof(unsigned int); i++) {
-            if(presets[i] == ev->data.note.note) {
+        for(int i = 0; i < kntxt->presets_total; i++) {
+            if(ev->data.note.note == presets[i]) {
+                // preset not set
+                if(!kntxt->presets[i])
+                    return 0;
+
                 pthread_mutex_lock(&kntxt->lock);
 
                 logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
