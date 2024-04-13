@@ -1229,6 +1229,8 @@ void cleanup(kntxt_t *kntxt) {
     free(kntxt->pixels);
     free(kntxt->monitor);
 
+    // FIXME: preview, midi, ...
+
     for(int i = 0; i < LOGGER_SIZE; i++)
         free(mainlog.lines[i]);
 
