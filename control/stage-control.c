@@ -363,19 +363,8 @@ void *thread_animate(void *extra) {
         }
         pthread_mutex_unlock(&kntxt->lock);
 
-        for(int a = 0; a < LEDSTOTAL; a++) {
-            pixel_t target = {.raw = frame->pixels[(line * frame->width) + a]};
-
-            /*
-            pixel_t target = {
-                .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
-                .g = (frame->pixels[(line * frame->width) + a] & 0x00ff00) >> 8,
-                .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
-            };
-            */
-
-            localpixels[a] = target;
-        }
+        // copy line (avoid copy pixel by pixel)
+        memcpy(localpixels, &frame->pixels[line * frame->width], LEDSTOTAL * sizeof(pixel_t));
 
         // commit this frame pixel to main context
         pthread_mutex_lock(&kntxt->lock);
