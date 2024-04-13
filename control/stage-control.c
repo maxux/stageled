@@ -129,10 +129,13 @@ typedef struct control_stats_t {
 
 typedef struct kntxt_t {
     pixel_t *pixels;
+    pixel_t *maskpixels;
     pixel_t *monitor; // monitoring output
     pixel_t *preview; // monitoring without master
 
     frame_t *frame;
+    frame_t *maskframe;
+
     transform_t midi;
     useconds_t speed;
     uint8_t blackout;
@@ -161,6 +164,9 @@ typedef struct kntxt_t {
 
     pthread_cond_t cond_presets;
     pthread_mutex_t mutcond_presets; // condition mutex
+
+    pthread_cond_t cond_masks;
+    pthread_mutex_t mutcond_masks; // condition mutex
 
 } kntxt_t;
 
@@ -315,7 +321,7 @@ frame_t *frame_loadfile(char *imgfile) {
 
         for(int x = 0; x < width; x++) {
             png_byte *ptr = &(row[x * 4]);
-            *pixel = ptr[0] | ptr[1] << 8 | ptr[2] << 16;
+            *pixel = ptr[0] | ptr[1] << 8 | ptr[2] << 16 | ptr[3] << 24;
             pixel += 1;
         }
     }
@@ -333,22 +339,28 @@ frame_t *frame_loadfile(char *imgfile) {
 
 void *thread_animate(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    frame_t *frame;
-    int line = 0;
+    frame_t *frame, *maskframe;
+    int line = 0, maskline = 0;
 
     // allocate local copy of pixels
     pixel_t *localpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    pixel_t *localmask = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
     // fetch initial frame already loaded by loader
     pthread_mutex_lock(&kntxt->lock);
+
     // remove frame from context, keeping it for us
     frame = kntxt->frame;
     kntxt->frame = NULL;
+
+    maskframe = NULL;
+
     pthread_mutex_unlock(&kntxt->lock);
 
     while(1) {
         // checking for changes
         pthread_mutex_lock(&kntxt->lock);
+
         if(kntxt->frame != NULL) {
             // cleaning frame not used anymore
             free(frame->pixels);
@@ -361,15 +373,37 @@ void *thread_animate(void *extra) {
             // start from the begining of that frame
             line = 0;
         }
+
+        if(kntxt->maskframe != NULL) {
+            // cleaning frame not used anymore
+            if(maskframe) {
+                free(maskframe->pixels);
+                free(maskframe);
+            }
+
+            // acquiring new frame
+            maskframe = kntxt->maskframe;
+            kntxt->maskframe = NULL;
+
+            // start from the begining of that frame
+            maskline = 0;
+        }
+
         pthread_mutex_unlock(&kntxt->lock);
 
         // copy line (avoid copy pixel by pixel)
         memcpy(localpixels, &frame->pixels[line * frame->width], LEDSTOTAL * sizeof(pixel_t));
 
+        if(maskframe)
+            memcpy(localmask, &maskframe->pixels[maskline * maskframe->width], LEDSTOTAL * sizeof(pixel_t));
+
         // commit this frame pixel to main context
         pthread_mutex_lock(&kntxt->lock);
+
         memcpy(kntxt->pixels, localpixels, sizeof(pixel_t) * LEDSTOTAL);
+        memcpy(kntxt->maskpixels, localmask, sizeof(pixel_t) * LEDSTOTAL);
         useconds_t waiting = kntxt->speed;
+
         pthread_mutex_unlock(&kntxt->lock);
 
         // wait relative to speed for the next frame
@@ -378,6 +412,12 @@ void *thread_animate(void *extra) {
         line += 1;
         if(line >= frame->height)
             line = 0;
+
+        if(maskframe) {
+            maskline += 1;
+            if(maskline >= maskframe->height)
+                maskline = 0;
+        }
     }
 
     return NULL;
@@ -424,6 +464,46 @@ void *thread_presets(void *extra) {
 
     return NULL;
 }
+
+void *thread_masks(void *extra) {
+    kntxt_t *kntxt = (kntxt_t *) extra;
+    frame_t *frame;
+
+    logger("[+] masks: initializing masks");
+
+    while(1) {
+        pthread_cond_wait(&kntxt->cond_masks, &kntxt->mutcond_masks);
+
+        // loading new mask name
+        pthread_mutex_lock(&kntxt->lock);
+        char *mask = strdup(kntxt->mask);
+        pthread_mutex_unlock(&kntxt->lock);
+
+        // locally load the frame
+        logger("[+] mask: loading new mask: %s", mask);
+        if(!(frame = frame_loadfile(mask))) {
+            // load failed, skipping
+            free(mask);
+            continue;
+        }
+
+        // commit frame
+        pthread_mutex_lock(&kntxt->lock);
+        // free previous frame not yet acquired by animate thread
+        if(kntxt->maskframe) {
+            free(kntxt->maskframe->pixels);
+            free(kntxt->maskframe);
+        }
+
+        kntxt->maskframe = frame;
+        pthread_mutex_unlock(&kntxt->lock);
+
+        free(mask);
+    }
+
+    return NULL;
+}
+
 //
 // network transmitter management
 //
@@ -533,6 +613,16 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
                 monitor[i].g = (uint8_t) (monitor[i].g * mul);
                 monitor[i].b = (uint8_t) (monitor[i].b * mul);
             }
+        }
+    }
+
+    for(int i = 0; i < LEDSTOTAL; i++) {
+        if(kntxt->maskpixels[i].raw != 0) {
+            float mul = (255 - kntxt->maskpixels[i].a) / 255.0;
+
+            monitor[i].r = (uint8_t) (monitor[i].r * mul);
+            monitor[i].g = (uint8_t) (monitor[i].g * mul);
+            monitor[i].b = (uint8_t) (monitor[i].b * mul);
         }
     }
 
@@ -741,6 +831,7 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
 
     // FIXME: use local copy, not main object
     uint8_t *presets = kntxt->midi.presets;
+    uint8_t *masks = kntxt->midi.masks;
 
     if(ev->type == SND_SEQ_EVENT_NOTEON) {
         // logger("[+] midi: note on, note: %d", ev->data.note.note);
@@ -756,6 +847,24 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
                 logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
                 kntxt->preset = kntxt->presets[i];
                 pthread_cond_signal(&kntxt->cond_presets);
+
+                pthread_mutex_unlock(&kntxt->lock);
+
+                return 0;
+            }
+        }
+
+        for(int i = 0; i < kntxt->masks_total; i++) {
+            if(ev->data.note.note == masks[i]) {
+                // preset not set
+                if(!kntxt->masks[i])
+                    return 0;
+
+                pthread_mutex_lock(&kntxt->lock);
+
+                logger("[+] loading mask %d: %s", i + 1, kntxt->masks[i]);
+                kntxt->mask = kntxt->masks[i];
+                pthread_cond_signal(&kntxt->cond_masks);
 
                 pthread_mutex_unlock(&kntxt->lock);
 
@@ -945,7 +1054,7 @@ void *thread_midi(void *extra) {
             midi_set_control(seq, APC_SOLID_100, kntxt->midi.masks[i], APC_MASKS_COLOR);
 
     // set initial preset
-    midi_set_control(seq, APC_PULSE_1_4, 0x38, APC_COLOR_YELLOW);
+    // midi_set_control(seq, APC_PULSE_1_4, 0x38, APC_COLOR_YELLOW);
 
     logger("[+] midi: interface initialized");
 
@@ -1242,7 +1351,7 @@ int main(int argc, char *argv[]) {
     (void) argv;
 
     printf("[+] initializing stage-led controle interface\n");
-    pthread_t netsend, feedback, midi, console, animate, presets;
+    pthread_t netsend, feedback, midi, console, animate, presets, masks;
 
     // logger initializer
     memset(&mainlog, 0x00, sizeof(logger_t));
@@ -1258,6 +1367,7 @@ int main(int argc, char *argv[]) {
     memset(kntxt, 0x00, sizeof(kntxt_t));
 
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
+    mainctx.maskpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.preview = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
 
@@ -1293,6 +1403,7 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_init(&mainctx.lock, NULL);
     pthread_cond_init(&mainctx.cond_presets, NULL);
+    pthread_cond_init(&mainctx.cond_masks, NULL);
 
     printf("[+] starting network dispatcher thread\n");
     if(pthread_create(&netsend, NULL, thread_netsend, kntxt))
@@ -1313,6 +1424,10 @@ int main(int argc, char *argv[]) {
     printf("[+] starting presets thread\n");
     if(pthread_create(&presets, NULL, thread_presets, kntxt))
         perror("thread: presets");
+
+    printf("[+] starting masks thread\n");
+    if(pthread_create(&masks, NULL, thread_masks, kntxt))
+        perror("thread: masks");
 
     // starting console at the very end to keep screen clean
     // if some early error appears
