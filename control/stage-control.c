@@ -123,6 +123,8 @@ typedef struct control_stats_t {
     double droprate;
     struct timeval ctrl_last_feedback;
 
+    double time_transform;
+
 } control_stats_t;
 
 typedef struct kntxt_t {
@@ -580,6 +582,9 @@ void *thread_netsend(void *extra) {
 
     uint8_t *localbitmap = (uint8_t *) calloc(sizeof(uint8_t), BITMAPSIZE);
 
+    // transform time
+    struct timeval before, after;
+
     while(1) {
         // fetch current frame pixel from animate
         pthread_mutex_lock(&kntxt->lock);
@@ -590,13 +595,18 @@ void *thread_netsend(void *extra) {
         pthread_mutex_unlock(&kntxt->lock);
 
         // apply transformation
+        gettimeofday(&before, NULL);
         netsend_pixels_transform(kntxt, monitor, preview, localbitmap);
+        gettimeofday(&after, NULL);
 
         // commit transformation to monitor to see changes on console
         pthread_mutex_lock(&kntxt->lock);
+
+        kntxt->client.time_transform = timediff(&after, &before);
         memcpy(kntxt->monitor, monitor, sizeof(pixel_t) * LEDSTOTAL);
         memcpy(kntxt->preview, preview, sizeof(pixel_t) * LEDSTOTAL);
         kntxt->client.frames += 1;
+
         pthread_mutex_unlock(&kntxt->lock);
 
         // sending the frame to the controller (if alive)
@@ -1156,7 +1166,7 @@ void *thread_console(void *extra) {
         printf("Frames committed: % 6ld, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
 
         console_cursor_move(upper + 6, 2);
-        printf("Controler uptime: %s", ctrlup);
+        printf("Controler uptime: %s / %.4f ms", ctrlup, client->time_transform * 1000);
 
         console_cursor_move(upper + 7, 2);
         printf("Interface uptime: %s", sessup);
