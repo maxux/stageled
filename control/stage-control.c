@@ -1263,6 +1263,7 @@ void *thread_console(void *extra) {
 
         console_cursor_move(upper + 3, 2);
         printf("Frames displayed: % 6ld, %s", client->showframes, strfps);
+        printf(" | Total frames: % 6ld", controller->frames);
 
         console_cursor_move(upper + 4, 2);
         printf("Frames committed: % 6ld, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
