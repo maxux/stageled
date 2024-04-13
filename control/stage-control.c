@@ -1,15 +1,17 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
 #include <string.h>
 #include <signal.h>
-#include <sys/time.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -222,6 +224,15 @@ char *uptime_prettify(size_t usec) {
     return strdup(buffer);
 }
 
+void thread_wait(int ms) {
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = ms * 1000,
+    };
+
+    nanosleep(&ts, NULL);
+}
+
 //
 // logging
 //
@@ -407,7 +418,8 @@ void *thread_animate(void *extra) {
         pthread_mutex_unlock(&kntxt->lock);
 
         // wait relative to speed for the next frame
-        usleep(waiting);
+        // usleep(waiting);
+        thread_wait(waiting);
 
         line += 1;
         if(line >= frame->height)
@@ -509,25 +521,25 @@ void *thread_masks(void *extra) {
 //
 int netsend_transmit_frame(uint8_t *bitmap, char *target) {
     struct sockaddr_in serveraddr;
+    struct hostent *hent;
+    int sockfd;
 
     char *hostname = target;
     int portno = 1111;
 
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if(sockfd < 0)
+    if((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         diep("socket");
 
-    struct hostent *server = gethostbyname(hostname);
-    if(server == NULL) {
-        fprintf(stderr, "ERROR, no such host as %s\n", hostname);
-        exit(0);
+    if((hent = gethostbyname(hostname)) == NULL) {
+        logger("[-] netsend: cannot resolve target host");
+        return 1;
     }
 
-    bzero((char *) &serveraddr, sizeof(serveraddr));
+    memset(&serveraddr, 0x00, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-
-    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(portno);
+
+    memcpy(&serveraddr.sin_addr, hent->h_addr_list[0], hent->h_length);
 
     int serverlen = sizeof(serveraddr);
 
@@ -692,7 +704,7 @@ void *thread_netsend(void *extra) {
         if(controladdr)
             netsend_transmit_frame(localbitmap, controladdr);
 
-        usleep(1000000 / TARGET_FPS);
+        thread_wait(1000000 / TARGET_FPS);
     }
 
     free(monitor);
@@ -731,7 +743,7 @@ void *thread_feedback(void *extra) {
         int bytes = recvfrom(sock, message, sizeof(message), 0, (struct sockaddr *) &client, &clientlen);
 
         if(bytes <= 0) {
-            usleep(10000);
+            thread_wait(10000);
             continue;
         }
 
@@ -998,7 +1010,7 @@ void *thread_midi(void *extra) {
     int npfds;
 
     npfds = snd_seq_poll_descriptors_count(seq, POLLIN);
-    pfds = alloca(sizeof(*pfds) * npfds);
+    pfds = calloc(sizeof(*pfds), npfds);
 
     kntxt->interface = 1;
     logger("[+] midi: interface connected, initializing");
@@ -1325,7 +1337,7 @@ void *thread_console(void *extra) {
         console_cursor_move(58, 0);
         fflush(stdout);
 
-        usleep(40000);
+        thread_wait(40000);
     }
 
     return NULL;

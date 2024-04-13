@@ -2,7 +2,7 @@ EXEC = stage-control
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 
-CFLAGS += -g -W -Wall -O2
+CFLAGS += -g -W -Wall -O2 -std=c11
 LDFLAGS += -lpng -lasound -lpthread
 
 all: $(EXEC)
