@@ -1171,6 +1171,24 @@ void *thread_console(void *extra) {
         pthread_mutex_unlock(&kntxt->lock);
 
         //
+        // presets list
+        //
+        upper = 28;
+        for(int i = 0; i < 10; i++) {
+            console_cursor_move(upper + i, 128);
+            printf("%s", kntxt->presets[i]);
+        }
+
+        //
+        // masks list
+        //
+        upper = 40;
+        for(int i = 0; i < 10; i++) {
+            console_cursor_move(upper + i, 128);
+            printf("%s", kntxt->masks[i]);
+        }
+
+        //
         // last lines from logger (ring buffer)
         //
         // console_border_top("Logger");
