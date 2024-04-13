@@ -66,10 +66,15 @@
 //
 // global context
 //
-typedef struct pixel_t {
-	int r;
-	int g;
-	int b;
+typedef union pixel_t {
+    struct {
+	    uint8_t r;
+	    uint8_t g;
+	    uint8_t b;
+        uint8_t a;
+    };
+
+    uint32_t raw;
 
 } pixel_t;
 
@@ -298,7 +303,7 @@ frame_t *frame_loadfile(char *imgfile) {
 
         for(int x = 0; x < width; x++) {
             png_byte *ptr = &(row[x * 4]);
-            *pixel = ptr[0] << 16 | ptr[1] << 8 | ptr[2];
+            *pixel = ptr[0] | ptr[1] << 8 | ptr[2] << 16;
             pixel += 1;
         }
     }
@@ -347,11 +352,15 @@ void *thread_animate(void *extra) {
         pthread_mutex_unlock(&kntxt->lock);
 
         for(int a = 0; a < LEDSTOTAL; a++) {
+            pixel_t target = {.raw = frame->pixels[(line * frame->width) + a]};
+
+            /*
             pixel_t target = {
                 .r = (frame->pixels[(line * frame->width) + a] & 0xff0000) >> 16,
                 .g = (frame->pixels[(line * frame->width) + a] & 0x00ff00) >> 8,
                 .b = (frame->pixels[(line * frame->width) + a] & 0x0000ff),
             };
+            */
 
             localpixels[a] = target;
         }
