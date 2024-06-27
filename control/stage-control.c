@@ -1274,17 +1274,17 @@ void *thread_console(void *extra) {
             printf("Master: %3d %s", kntxt->midi.master, CBAD(" BLACKOUT ENABLED "));
 
         } else {
-            printf("Master: %3d", kntxt->midi.master);
+            printf("Master: %3d %-18s", kntxt->midi.master, "");
         }
 
         console_cursor_move(upper + 2, 2);
         printf("Strobe: %3d [index %3d]", kntxt->strobe, kntxt->strobe_index);
 
         console_cursor_move(upper + 3, 2);
-        printf("Speed : % 4d [%.1f fps]", kntxt->speed, speedfps);
+        printf("Speed : % 4d [%.1f fps] %-10s", kntxt->speed, speedfps, "");
 
         console_cursor_move(upper + 5, 2);
-        printf("Interface: %s", kntxt->interface ? COK(" online ") : CBAD(" offline "));
+        printf("Interface: %s %-10s", kntxt->interface ? COK(" online ") : CBAD(" offline "), "");
 
         console_cursor_move(upper + 6, 2);
         printf("Animating: %s", kntxt->preset);
@@ -1307,14 +1307,14 @@ void *thread_console(void *extra) {
 
         upper = 40;
         console_cursor_move(upper, 2);
-        printf("Controler: %s", state);
+        printf("Controler: %s %-20s", state, "");
 
         console_cursor_move(upper + 1, 2);
         if(controller->state == 0) {
-            printf("Last seen: %s", CWAIT(" waiting "));
+            printf("Last seen: %s %-10s", CWAIT(" waiting "), "");
 
         } else {
-            printf("Last seen: %.2f seconds ago", lastping);
+            printf("Last seen: %.2f seconds ago %-10s", lastping, "");
         }
 
 
