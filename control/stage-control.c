@@ -35,6 +35,7 @@
 #define CWAIT(x)    "\033[1;37;44m" x CRST
 #define COK(x)      "\033[1;37;42m" x CRST
 #define CBAD(x)     "\033[5m\033[1;37;41m" x CRST
+#define CNULL(x)    "\033[1;37;90m" x CRST
 
 #define APC_COLOR_BLACK       0
 #define APC_COLOR_WHITE       3
@@ -67,6 +68,8 @@
 #define APC_BLINK_1_8         0x9D
 #define APC_BLINK_1_4         0x9E
 #define APC_BLINK_1_2         0x9F
+
+#define TEMPLATE_PREFIX       "/home/maxux/git/stageled/templates"
 
 //
 // global context
@@ -276,11 +279,14 @@ frame_t *frame_loadfile(char *imgfile) {
     png_structp ctx;
     png_infop info;
     frame_t *frame = NULL;
+    char prefixed[256];
 
     unsigned char header[8]; // 8 is the maximum size that can be checked
 
-    if(!(fp = fopen(imgfile, "r")))
-        dieptr(imgfile);
+    sprintf(prefixed, "%s/%s", TEMPLATE_PREFIX, imgfile);
+
+    if(!(fp = fopen(prefixed, "r")))
+        dieptr(prefixed);
 
     if(fread(header, 1, 8, fp) != 8)
         diep("fread");
@@ -301,7 +307,8 @@ frame_t *frame_loadfile(char *imgfile) {
     int width = png_get_image_width(ctx, info);
     int height = png_get_image_height(ctx, info);
 
-    logger("[+] loader: image dimension: %d x %d px", width, height);
+    if(width != 2880)
+        logger("[+] loader: warning: image dimension: %d x %d px", width, height);
 
     png_bytep *lines = (png_bytep *) malloc(sizeof(png_bytep) * height);
     for(int y = 0; y < height; y++)
@@ -1287,7 +1294,10 @@ void *thread_console(void *extra) {
         printf("Interface: %s %-10s", kntxt->interface ? COK(" online ") : CBAD(" offline "), "");
 
         console_cursor_move(upper + 6, 2);
-        printf("Animating: %s", kntxt->preset);
+        printf("Animating: %-40s", kntxt->preset);
+
+        console_cursor_move(upper + 7, 2);
+        printf("Masking  : %-40s", kntxt->mask ? kntxt->mask : "[no mask selected]");
 
         //
         // controller and client statistics
@@ -1352,16 +1362,24 @@ void *thread_console(void *extra) {
         // presets list
         //
         upper = 28;
-        for(int i = 0; i < 10; i++) {
+        for(int i = 0; i < 8; i++) {
             console_cursor_move(upper + i, 128);
-            printf("%s", kntxt->presets[i]);
+            char col1[48], col2[48], col3[48];
+
+            sprintf(col1, "%d. %s", i, kntxt->presets[i] ? kntxt->presets[i] : CNULL("None"));
+            sprintf(col2, "% 3d. %s", i + 8, kntxt->presets[i + 8] ? kntxt->presets[i + 8] : CNULL("None"));
+            sprintf(col3, "% 3d. %s", i + 16, kntxt->presets[i + 16] ? kntxt->presets[i + 16] : CNULL("None"));
+
+            printf("%-40s %-40s %-40s", col1, col2, col3);
+
+            // FIXME
         }
 
         //
         // masks list
         //
         upper = 40;
-        for(int i = 0; i < 10; i++) {
+        for(int i = 0; i < 8; i++) {
             console_cursor_move(upper + i, 128);
             printf("%s", kntxt->masks[i]);
         }
