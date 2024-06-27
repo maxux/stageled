@@ -637,6 +637,31 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
         }
     }
 
+    int barperseg[2][7] = {
+        {0, 8, -1, -1, -1, -1, -1},
+        {1, 2,  3,  9, 10, 11, -1},
+    };
+
+    for(int segment = 0; segment < 2; segment++) {
+        // is segment faded
+        if(segments[segment] == 255)
+            continue;
+
+        for(int xbar = 0; xbar < 7; xbar++) {
+            if(barperseg[segment][xbar] < 0)
+                break;
+
+            float mul = segments[segment] / 255.0;
+
+            for(int i = (barperseg[segment][xbar] * PERSEGMENT); i < ((barperseg[segment][xbar] + 1) * PERSEGMENT); i++) {
+                monitor[i].r = (uint8_t) (monitor[i].r * mul);
+                monitor[i].g = (uint8_t) (monitor[i].g * mul);
+                monitor[i].b = (uint8_t) (monitor[i].b * mul);
+            }
+        }
+    }
+
+    /*
     if(segments[0] < 255 || segments[1] < 255 || segments[2] < 255) {
         for(int segment = 0; segment < 3; segment++) {
             float mul = segments[segment] / 255.0;
@@ -648,6 +673,7 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
             }
         }
     }
+    */
 
     for(int i = 0; i < LEDSTOTAL; i++) {
         if(kntxt->maskpixels[i].raw != 0) {
