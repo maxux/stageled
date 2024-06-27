@@ -1454,20 +1454,29 @@ int main(int argc, char *argv[]) {
     mainctx.midi.presets = calloc(sizeof(uint8_t), mainctx.presets_total);
     mainctx.midi.masks = calloc(sizeof(uint8_t), mainctx.masks_total);
 
-    mainctx.presets[0] = "/home/maxux/git/stageled/templates/debug.png";
-    mainctx.presets[1] = "/home/maxux/git/stageled/templates/kermesse.png";
-    mainctx.presets[2] = "/home/maxux/git/stageled/templates/spectre3.png";
-    mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
-    mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
-    mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
-    mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
-    mainctx.presets[7] = "/home/maxux/git/stageled/templates/full.png";
-    mainctx.presets[8] = "/home/maxux/git/stageled/templates/linear-solid.png";
-    mainctx.presets[9] = "/home/maxux/git/stageled/templates/rainbow.png";
+    // mainctx.presets[1] = "/home/maxux/git/stageled/templates/kermesse.png";
+    // mainctx.presets[2] = "/home/maxux/git/stageled/templates/spectre3.png";
+    // mainctx.presets[3] = "/home/maxux/git/stageled/templates/stan.png";
+    // mainctx.presets[4] = "/home/maxux/git/stageled/templates/spectre2.png";
+    // mainctx.presets[5] = "/home/maxux/git/stageled/templates/follow1.png";
+    // mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
+
+    int i = 0;
+    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/debug.png";
+    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/thunder-test.png";
+    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/linear-solid.png";
+
+    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/rainbow.png";
+    mainctx.presets[23] = "/home/maxux/git/stageled/templates/full.png";
+
     mainctx.preset = mainctx.presets[0];
 
-    mainctx.masks[0] = "/home/maxux/git/stageled/templates/mask-diagonal.png";
-    mainctx.masks[1] = "/home/maxux/git/stageled/templates/mask-hole.png";
+    i = 0;
+    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-diagonal.png";
+    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-hole.png";
+    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-thunder.png";
+
+    mainctx.masks[23] = "/home/maxux/git/stageled/templates/mask-empty.png";
 
     // loading default frame
     mainctx.frame = frame_loadfile(mainctx.preset);
