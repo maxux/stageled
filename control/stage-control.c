@@ -1462,21 +1462,32 @@ int main(int argc, char *argv[]) {
     // mainctx.presets[6] = "/home/maxux/git/stageled/templates/cedric.png";
 
     int i = 0;
-    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/debug.png";
-    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/thunder-test.png";
-    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/linear-solid.png";
+    mainctx.presets[i++] = "debug.png";
+    mainctx.presets[i++] = "thunder-colors-1.png";
+    mainctx.presets[i++] = "thunder-colors-2.png";
+    mainctx.presets[i++] = "thunder-colors-3.png";
+    mainctx.presets[i++] = "thunder-test.png";
+    mainctx.presets[i++] = "linear-solid.png";
 
-    mainctx.presets[i++] = "/home/maxux/git/stageled/templates/rainbow.png";
-    mainctx.presets[23] = "/home/maxux/git/stageled/templates/full.png";
+    mainctx.presets[i++] = "rainbow.png";
+    mainctx.presets[23] = "full.png";
 
     mainctx.preset = mainctx.presets[0];
 
     i = 0;
-    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-diagonal.png";
-    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-hole.png";
-    mainctx.masks[i++] = "/home/maxux/git/stageled/templates/mask-thunder.png";
+    mainctx.masks[i++] = "mask-diagonal.png";
+    mainctx.masks[i++] = "mask-hole.png";
+    mainctx.masks[i++] = "mask-thunder.png";
+    mainctx.masks[i++] = "mask-thunder-1.png";
+    mainctx.masks[i++] = "mask-thunder-2.png";
+    mainctx.masks[i++] = "mask-thunder-front-string.png";
+    mainctx.masks[i++] = "mask-thunder-full-string.png";
+    mainctx.masks[i++] = "mask-thunder-segment-smooth.png";
+    mainctx.masks[i++] = "mask-thunder-segment-smooth-2.png";
+    mainctx.masks[i++] = "mask-thunder-pattern-1.png";
+    mainctx.masks[i++] = "mask-thunder-pattern-2.png";
 
-    mainctx.masks[23] = "/home/maxux/git/stageled/templates/mask-empty.png";
+    mainctx.masks[23] = "mask-empty.png";
 
     // loading default frame
     mainctx.frame = frame_loadfile(mainctx.preset);
