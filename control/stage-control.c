@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <png.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #define LOGGER_SIZE 32
 #define SEGMENTS    24
@@ -169,6 +170,8 @@ typedef struct kntxt_t {
 
     pthread_cond_t cond_masks;
     pthread_mutex_t mutcond_masks; // condition mutex
+
+    atomic_char keepgoing;
 
 } kntxt_t;
 
@@ -368,7 +371,7 @@ void *thread_animate(void *extra) {
 
     pthread_mutex_unlock(&kntxt->lock);
 
-    while(1) {
+    while(kntxt->keepgoing) {
         // checking for changes
         pthread_mutex_lock(&kntxt->lock);
 
@@ -440,12 +443,21 @@ void *thread_animate(void *extra) {
 //
 void *thread_presets(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
+    int retval;
     frame_t *frame;
 
     logger("[+] presets: initializing presets, loading default one");
 
-    while(1) {
-        pthread_cond_wait(&kntxt->cond_presets, &kntxt->mutcond_presets);
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 100000,
+    };
+
+    while(kntxt->keepgoing) {
+        if((retval = pthread_cond_timedwait(&kntxt->cond_presets, &kntxt->mutcond_presets, &ts)) != 0) {
+            if(retval == ETIMEDOUT)
+                continue;
+        }
 
         // loading new preset name
         pthread_mutex_lock(&kntxt->lock);
@@ -479,12 +491,21 @@ void *thread_presets(void *extra) {
 
 void *thread_masks(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
+    int retval;
     frame_t *frame;
 
     logger("[+] masks: initializing masks");
 
-    while(1) {
-        pthread_cond_wait(&kntxt->cond_masks, &kntxt->mutcond_masks);
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 100000,
+    };
+
+    while(kntxt->keepgoing) {
+        if((retval = pthread_cond_timedwait(&kntxt->cond_masks, &kntxt->mutcond_masks, &ts)) != 0) {
+            if(retval == ETIMEDOUT)
+                continue;
+        }
 
         // loading new mask name
         pthread_mutex_lock(&kntxt->lock);
@@ -676,7 +697,7 @@ void *thread_netsend(void *extra) {
     // transform time
     struct timeval before, after;
 
-    while(1) {
+    while(kntxt->keepgoing) {
         // fetch current frame pixel from animate
         pthread_mutex_lock(&kntxt->lock);
 
@@ -739,7 +760,12 @@ void *thread_feedback(void *extra) {
 
     logger("[+] feedback: waiting for incoming packets");
 
-    while(1) {
+    struct timeval read_timeout;
+    read_timeout.tv_sec = 0;
+    read_timeout.tv_usec = 10000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
+
+    while(kntxt->keepgoing) {
         int bytes = recvfrom(sock, message, sizeof(message), 0, (struct sockaddr *) &client, &clientlen);
 
         if(bytes <= 0) {
@@ -1071,18 +1097,17 @@ void *thread_midi(void *extra) {
     logger("[+] midi: interface initialized");
 
     // polling events
-    while(1) {
+    while(kntxt->keepgoing) {
         snd_seq_event_t *event;
 
         snd_seq_poll_descriptors(seq, pfds, npfds, POLLIN);
-        if(poll(pfds, npfds, -1) < 0)
+        if(poll(pfds, npfds, 100) < 0)
             diep("poll");
 
-        while((err = snd_seq_event_input(seq, &event)) > 0) {
-            if(!event)
-                continue;
-
-           midi_handle_event(event, kntxt, seq);
+        if((err = snd_seq_event_input(seq, &event)) > 0) {
+            if(event) {
+                midi_handle_event(event, kntxt, seq);
+            }
         }
     }
 
@@ -1190,7 +1215,7 @@ void *thread_console(void *extra) {
 
     console_panes_refresh();
 
-    while(1) {
+    while(kntxt->keepgoing) {
         // preparing relative timing
         struct timeval now;
         gettimeofday(&now, NULL);
@@ -1279,6 +1304,11 @@ void *thread_console(void *extra) {
 
         console_cursor_move(upper + 4, 2);
         printf("Frames committed: % 6ld, dropped: %lu [%.1f%%]", client->frames, client->dropped, client->droprate);
+
+        /*
+        if(client->frames > 200)
+            kntxt->keepgoing = 0;
+        */
 
         console_cursor_move(upper + 6, 2);
         printf("Controler uptime: %s / %.4f ms", ctrlup, client->time_transform * 1000);
@@ -1379,6 +1409,8 @@ int main(int argc, char *argv[]) {
     // default initialization
     memset(kntxt, 0x00, sizeof(kntxt_t));
 
+    mainctx.keepgoing = 1;
+
     mainctx.pixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.maskpixels = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
     mainctx.monitor = (pixel_t *) calloc(sizeof(pixel_t), LEDSTOTAL);
@@ -1451,8 +1483,10 @@ int main(int argc, char *argv[]) {
     pthread_join(netsend, NULL);
     pthread_join(feedback, NULL);
     pthread_join(midi, NULL);
-    pthread_join(console, NULL);
     pthread_join(animate, NULL);
+    pthread_join(presets, NULL);
+    pthread_join(masks, NULL);
+    pthread_join(console, NULL);
 
     cleanup(kntxt);
 
