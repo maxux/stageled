@@ -670,20 +670,6 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
         }
     }
 
-    /*
-    if(segments[0] < 255 || segments[1] < 255 || segments[2] < 255) {
-        for(int segment = 0; segment < 3; segment++) {
-            float mul = segments[segment] / 255.0;
-
-            for(int i = (segment * PERSEGMENT); i < ((segment + 1) * PERSEGMENT); i++) {
-                monitor[i].r = (uint8_t) (monitor[i].r * mul);
-                monitor[i].g = (uint8_t) (monitor[i].g * mul);
-                monitor[i].b = (uint8_t) (monitor[i].b * mul);
-            }
-        }
-    }
-    */
-
     for(int i = 0; i < LEDSTOTAL; i++) {
         if(kntxt->maskpixels[i].raw != 0) {
             float mul = (255 - kntxt->maskpixels[i].a) / 255.0;
