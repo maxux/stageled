@@ -453,21 +453,31 @@ void *thread_animate(void *extra) {
 //
 void *thread_presets(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    int retval;
+    // int retval;
     frame_t *frame;
 
     logger("[+] presets: initializing presets, loading default one");
 
+    /*
     struct timespec ts = {
-        .tv_sec = 0,
+        .tv_sec = 1,
         .tv_nsec = 100000,
     };
+    */
 
     while(kntxt->keepgoing) {
+        /*
         if((retval = pthread_cond_timedwait(&kntxt->cond_presets, &kntxt->mutcond_presets, &ts)) != 0) {
-            if(retval == ETIMEDOUT)
+            if(retval == ETIMEDOUT) {
+                logger("timeout");
                 continue;
+            }
         }
+        */
+
+        pthread_mutex_lock(&kntxt->mutcond_presets);
+        pthread_cond_wait(&kntxt->cond_presets, &kntxt->mutcond_presets); // FIXME
+        pthread_mutex_unlock(&kntxt->mutcond_presets);
 
         // loading new preset name
         pthread_mutex_lock(&kntxt->lock);
@@ -501,21 +511,29 @@ void *thread_presets(void *extra) {
 
 void *thread_masks(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
-    int retval;
+    // int retval;
     frame_t *frame;
 
     logger("[+] masks: initializing masks");
 
+    /*
     struct timespec ts = {
         .tv_sec = 0,
         .tv_nsec = 100000,
     };
+    */
 
     while(kntxt->keepgoing) {
+        /*
         if((retval = pthread_cond_timedwait(&kntxt->cond_masks, &kntxt->mutcond_masks, &ts)) != 0) {
             if(retval == ETIMEDOUT)
                 continue;
         }
+        */
+
+        pthread_mutex_lock(&kntxt->mutcond_masks);
+        pthread_cond_wait(&kntxt->cond_masks, &kntxt->mutcond_masks); // FIXME
+        pthread_mutex_unlock(&kntxt->mutcond_masks);
 
         // loading new mask name
         pthread_mutex_lock(&kntxt->lock);
