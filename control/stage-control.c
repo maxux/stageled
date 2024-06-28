@@ -1323,11 +1323,11 @@ void *thread_console(void *extra) {
         console_cursor_move(upper + 5, 2);
         printf("Interface: %s %-10s", kntxt->interface ? COK(" online ") : CBAD(" offline "), "");
 
-        console_cursor_move(upper + 6, 2);
-        printf("Animating: %-40s", kntxt->preset);
-
         console_cursor_move(upper + 7, 2);
-        printf("Masking  : %-40s", kntxt->mask ? kntxt->mask : "[no mask selected]");
+        printf("Preset: %-40s", kntxt->preset);
+
+        console_cursor_move(upper + 8, 2);
+        printf("Mask  : %-40s", kntxt->mask ? kntxt->mask : "---");
 
         //
         // controller and client statistics
@@ -1391,12 +1391,12 @@ void *thread_console(void *extra) {
         //
         // presets list
         //
-        console_list_print(kntxt->presets, kntxt->presets_total, kntxt->preset, 28, 128);
+        console_list_print(kntxt->presets, kntxt->presets_total, kntxt->preset, 29, 128);
 
         //
         // masks list
         //
-        console_list_print(kntxt->masks, kntxt->masks_total, kntxt->mask, 40, 128);
+        console_list_print(kntxt->masks, kntxt->masks_total, kntxt->mask, 41, 128);
 
         //
         // last lines from logger (ring buffer)
