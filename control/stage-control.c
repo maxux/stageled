@@ -32,6 +32,8 @@
 #define CRST        "\033[0m"
 #define CWARN       "\033[1;33m"
 #define CGOOD       "\033[1;32m"
+#define CSELECTED   "\033[1;37;46m"
+#define CEMPTY      "\033[1;37;90m"
 #define CWAIT(x)    "\033[1;37;44m" x CRST
 #define COK(x)      "\033[1;37;42m" x CRST
 #define CBAD(x)     "\033[5m\033[1;37;41m" x CRST
@@ -1241,6 +1243,28 @@ void console_pixels_draw(pixel_t *pixels, int shift) {
     }
 }
 
+void console_list_print(char **list, int total, char *selected, int upper, int left) {
+    for(int i = 0; i < total; i++) {
+        int colindex = i / 8;
+        int lineindex = i % 8;
+
+        console_cursor_move(upper + lineindex, left + (colindex * 40));
+
+        char *color = "";
+        char *text = list[i];
+
+        if(list[i] == NULL) {
+            color = CEMPTY;
+            text = "---";
+        }
+
+        if(selected && list[i] == selected)
+            color = CSELECTED;
+
+        printf("%02d. %s%s" CRST, (i + 1), color, text);
+    }
+}
+
 void *thread_console(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     logger_t *logs = &mainlog;
@@ -1361,28 +1385,12 @@ void *thread_console(void *extra) {
         //
         // presets list
         //
-        upper = 28;
-        for(int i = 0; i < 8; i++) {
-            console_cursor_move(upper + i, 128);
-            char col1[48], col2[48], col3[48];
-
-            sprintf(col1, "%d. %s", i, kntxt->presets[i] ? kntxt->presets[i] : CNULL("None"));
-            sprintf(col2, "% 3d. %s", i + 8, kntxt->presets[i + 8] ? kntxt->presets[i + 8] : CNULL("None"));
-            sprintf(col3, "% 3d. %s", i + 16, kntxt->presets[i + 16] ? kntxt->presets[i + 16] : CNULL("None"));
-
-            printf("%-40s %-40s %-40s", col1, col2, col3);
-
-            // FIXME
-        }
+        console_list_print(kntxt->presets, kntxt->presets_total, kntxt->preset, 28, 128);
 
         //
         // masks list
         //
-        upper = 40;
-        for(int i = 0; i < 8; i++) {
-            console_cursor_move(upper + i, 128);
-            printf("%s", kntxt->masks[i]);
-        }
+        console_list_print(kntxt->masks, kntxt->masks_total, kntxt->mask, 40, 128);
 
         //
         // last lines from logger (ring buffer)
