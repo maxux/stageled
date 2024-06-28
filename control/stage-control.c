@@ -49,6 +49,7 @@
 #define APC_COLOR_PURPLE      53
 
 #define APC_BLACKOUT_COLOR    APC_COLOR_WHITE
+#define APC_FULLON_COLOR      APC_COLOR_WHITE
 #define APC_PRESETS_COLOR     APC_COLOR_YELLOW
 #define APC_MASKS_COLOR       APC_COLOR_PURPLE
 
@@ -153,6 +154,7 @@ typedef struct kntxt_t {
     transform_t midi;
     useconds_t speed;
     uint8_t blackout;
+    uint8_t fullon;
     uint8_t strobe;
     uint8_t strobe_state;
     uint32_t strobe_index;
@@ -627,6 +629,7 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
 
     uint8_t rawmaster = kntxt->midi.master;
     uint8_t blackout = kntxt->blackout;
+    uint8_t fullon = kntxt->fullon;
 
     uint8_t strobe = kntxt->strobe;
     uint8_t strobe_index = kntxt->strobe_index;
@@ -677,6 +680,9 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
     // copy current state to preview, which is monitor without master applied
     memcpy(preview, monitor, sizeof(pixel_t) * LEDSTOTAL);
 
+    if(fullon)
+        memset(monitor, 0xffffffff, LEDSTOTAL * sizeof(pixel_t));
+
     if(colorize[0] || colorize[1] || colorize[2]) {
         float redmul = (255 - colorize[0]) / 255.0;
         float greenmul = (255 - colorize[1]) / 255.0;
@@ -713,6 +719,7 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
         }
     }
 
+    // apply mask
     for(int i = 0; i < LEDSTOTAL; i++) {
         if(kntxt->maskpixels[i].raw != 0) {
             float mul = (255 - kntxt->maskpixels[i].a) / 255.0;
@@ -1024,6 +1031,11 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
             }
         }
 
+        // full on enabled
+        if(ev->data.note.note == 0x06) {
+            kntxt->fullon = 1;
+            midi_set_control(seq, APC_SOLID_100, 0x06, APC_FULLON_COLOR);
+        }
         // strip color note
         int strip_colors[3] = {APC_COLOR_RED, APC_COLOR_GREEN, APC_COLOR_BLUE};
         if(ev->data.note.note < 3) { // >= 0 not needed, unsigned
@@ -1055,7 +1067,16 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
     }
 
     if(ev->type == SND_SEQ_EVENT_NOTEOFF) {
-        // printf("noteoff, note: %d", ev->data.note.note);
+        // logger("[+] midi: note off, note: %d", ev->data.note.note);
+
+        // full on disabled
+        if(ev->data.note.note == 0x06) {
+            pthread_mutex_lock(&kntxt->lock);
+            kntxt->fullon = 0;
+            pthread_mutex_unlock(&kntxt->lock);
+
+            midi_set_control(seq, APC_SOLID_10, 0x06, APC_FULLON_COLOR);
+        }
     }
 
     if(ev->type == SND_SEQ_EVENT_CONTROLLER) {
@@ -1188,6 +1209,9 @@ void *thread_midi(void *extra) {
 
     // set blackout default
     midi_set_control(seq, APC_SOLID_100, 0x07, APC_BLACKOUT_COLOR);
+
+    // set fullon default
+    midi_set_control(seq, APC_SOLID_10, 0x06, APC_FULLON_COLOR);
 
     // set red, green, blue channel cut
     midi_set_control(seq, APC_SOLID_100, 0x00, APC_COLOR_RED);
@@ -1577,6 +1601,7 @@ int main(int argc, char *argv[]) {
     mainctx.presets[i++] = "linear-solid.png";
 
     mainctx.presets[i++] = "rainbow.png";
+    mainctx.presets[22] = "full-black.png";
     mainctx.presets[23] = "full.png";
 
     mainctx.preset = mainctx.presets[0];
@@ -1593,8 +1618,6 @@ int main(int argc, char *argv[]) {
     mainctx.masks[i++] = "mask-thunder-segment-smooth-2.png";
     mainctx.masks[i++] = "mask-thunder-pattern-1.png";
     mainctx.masks[i++] = "mask-thunder-pattern-2.png";
-
-    mainctx.masks[23] = "mask-empty.png";
 
     // loading default frame
     mainctx.frame = frame_loadfile(mainctx.preset);
