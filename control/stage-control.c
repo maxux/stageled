@@ -1028,6 +1028,18 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
     return 0;
 }
 
+void *midi_no_interface(kntxt_t *kntxt) {
+    // force master to full
+    kntxt->midi.master = 255;
+
+    // force segments to full
+    kntxt->midi.sliders[0].value = 255;
+    kntxt->midi.sliders[1].value = 255;
+    kntxt->midi.sliders[2].value = 255;
+
+    return NULL;
+}
+
 void *thread_midi(void *extra) {
     kntxt_t *kntxt = (kntxt_t *) extra;
     snd_seq_t *seq;
@@ -1052,15 +1064,13 @@ void *thread_midi(void *extra) {
 
     // hardcoded keyboard port
     if((err = snd_seq_parse_address(seq, &ports[0], "APC mini mk2")) < 0) {
-        kntxt->midi.master = 255;
         logger("[-] midi: parse address: %s", snd_strerror(err));
-        return NULL;
+        return midi_no_interface(kntxt);
     }
 
     if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
-        kntxt->midi.master = 255;
         logger("[-] midi: connect from: %s", snd_strerror(err));
-        return NULL;
+        return midi_no_interface(kntxt);
     }
 
     if((err = snd_seq_connect_to(seq, 0, ports[0].client, ports[0].port)) < 0) {
