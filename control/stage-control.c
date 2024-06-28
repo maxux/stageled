@@ -242,6 +242,14 @@ void thread_wait(int ms) {
     nanosleep(&ts, NULL);
 }
 
+int list_index_search(char **list, char *entry, int length) {
+    for(int i = 0; i < length; i++)
+        if(list[i] == entry)
+            return i;
+
+    return -1;
+}
+
 //
 // logging
 //
@@ -926,6 +934,13 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
 
                 pthread_mutex_lock(&kntxt->lock);
 
+                // switch button blink
+                int oldindex = list_index_search(kntxt->presets, kntxt->preset, kntxt->presets_total);
+                if(oldindex >= 0)
+                    midi_set_control(seq, APC_SOLID_100, presets[oldindex], APC_PRESETS_COLOR);
+
+                midi_set_control(seq, APC_PULSE_1_4, presets[i], APC_PRESETS_COLOR);
+
                 logger("[+] loading preset %d: %s", i + 1, kntxt->presets[i]);
                 kntxt->preset = kntxt->presets[i];
                 pthread_cond_signal(&kntxt->cond_presets);
@@ -943,6 +958,14 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
                     return 0;
 
                 pthread_mutex_lock(&kntxt->lock);
+
+                // switch button blink
+                if(kntxt->mask) {
+                    int oldindex = list_index_search(kntxt->masks, kntxt->mask, kntxt->masks_total);
+                    midi_set_control(seq, APC_SOLID_100, masks[oldindex], APC_MASKS_COLOR);
+                }
+
+                midi_set_control(seq, APC_PULSE_1_4, masks[i], APC_MASKS_COLOR);
 
                 logger("[+] loading mask %d: %s", i + 1, kntxt->masks[i]);
                 kntxt->mask = kntxt->masks[i];
@@ -1148,7 +1171,7 @@ void *thread_midi(void *extra) {
             midi_set_control(seq, APC_SOLID_100, kntxt->midi.masks[i], APC_MASKS_COLOR);
 
     // set initial preset
-    // midi_set_control(seq, APC_PULSE_1_4, 0x38, APC_COLOR_YELLOW);
+    midi_set_control(seq, APC_PULSE_1_4, kntxt->midi.presets[0], APC_PRESETS_COLOR);
 
     logger("[+] midi: interface initialized");
 
