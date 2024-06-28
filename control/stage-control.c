@@ -150,6 +150,7 @@ typedef struct kntxt_t {
     uint8_t strobe;
     uint8_t strobe_state;
     uint32_t strobe_index;
+    uint32_t strobe_duration;
 
     char **presets;
     int presets_total;
@@ -614,12 +615,16 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
 
     // checking if a strobe mask needs to be applied
     if(strobe && !blackout) {
-        int divider = ((256 - strobe) / 20);
-        if(divider < 1)
-            divider = 1;
+        int divider = ((256 - strobe) / 20) + 1;
+        int ontime = ((256 - kntxt->strobe_duration) / 20) + 1;
+
+        if(strobe_state == 1 && ontime < divider)
+            divider = ontime;
 
         // check if we need to change the state
         if(strobe_index % divider == 0) {
+            kntxt->strobe_index = 1;
+
             strobe_state = (strobe_state) ? 0 : 1;
             kntxt->strobe_state = strobe_state;
         }
@@ -1004,6 +1009,8 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
 
     // apply strobe value
     kntxt->strobe = kntxt->midi.sliders[6].value;
+    kntxt->strobe_duration = kntxt->midi.sliders[5].value;
+
     if(kntxt->strobe == 0) {
         kntxt->strobe_index = 0;
         kntxt->strobe_state = 0;
@@ -1305,7 +1312,10 @@ void *thread_console(void *extra) {
         }
 
         console_cursor_move(upper + 2, 2);
-        printf("Strobe: %3d [index %3d]", kntxt->strobe, kntxt->strobe_index);
+        printf("Strobe: %s ", kntxt->strobe ? COK(" on ") : CNULL(" off "));
+
+        console_cursor_move(upper + 2, 14);
+        printf(" | refresh %3d / flash %03d / index %3d", kntxt->strobe, kntxt->strobe_duration, kntxt->strobe_index);
 
         console_cursor_move(upper + 3, 2);
         printf("Speed : % 4d [%.1f fps] %-10s", kntxt->speed, speedfps, "");
