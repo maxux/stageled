@@ -951,6 +951,25 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
             }
         }
 
+        if(ev->data.note.note == 112) {
+            logger("[+] midi: resetting masks");
+
+            pthread_mutex_lock(&kntxt->lock);
+            if(kntxt->maskframe) {
+                free(kntxt->maskframe->pixels);
+                free(kntxt->maskframe);
+                kntxt->maskframe = NULL;
+            }
+
+            if(kntxt->mask) {
+                int oldindex = list_index_search(kntxt->masks, kntxt->mask, kntxt->masks_total);
+                midi_set_control(seq, APC_SOLID_100, masks[oldindex], APC_MASKS_COLOR);
+            }
+
+            kntxt->mask = NULL;
+            pthread_mutex_unlock(&kntxt->lock);
+        }
+
         for(int i = 0; i < kntxt->masks_total; i++) {
             if(ev->data.note.note == masks[i]) {
                 // preset not set
