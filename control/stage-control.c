@@ -52,6 +52,11 @@
 #define APC_PRESETS_COLOR     APC_COLOR_YELLOW
 #define APC_MASKS_COLOR       APC_COLOR_PURPLE
 
+#define APC_SINGLE_MODE       0x90
+#define APC_SINGLE_OFF        0x00
+#define APC_SINGLE_ON         0x01
+#define APC_SINGLE_BLINK      0x02
+
 #define APC_SOLID_10          0x90
 #define APC_SOLID_25          0x91
 #define APC_SOLID_50          0x92
@@ -143,6 +148,7 @@ typedef struct kntxt_t {
 
     frame_t *frame;
     frame_t *maskframe;
+    frame_t *maskreset; // special flag
 
     transform_t midi;
     useconds_t speed;
@@ -419,6 +425,12 @@ void *thread_animate(void *extra) {
 
             // start from the begining of that frame
             maskline = 0;
+
+            // special reset flag
+            if(maskframe == (frame_t *) &kntxt->maskreset) {
+                memset(localmask, 0x00, sizeof(pixel_t) * LEDSTOTAL);
+                maskframe = NULL;
+            }
         }
 
         pthread_mutex_unlock(&kntxt->lock);
@@ -951,22 +963,22 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
             }
         }
 
-        if(ev->data.note.note == 112) {
-            logger("[+] midi: resetting masks");
-
+        if(ev->data.note.note == 112 && kntxt->mask) {
             pthread_mutex_lock(&kntxt->lock);
-            if(kntxt->maskframe) {
-                free(kntxt->maskframe->pixels);
-                free(kntxt->maskframe);
-                kntxt->maskframe = NULL;
-            }
 
             if(kntxt->mask) {
+                logger("[+] midi: resetting mask layer");
+
                 int oldindex = list_index_search(kntxt->masks, kntxt->mask, kntxt->masks_total);
                 midi_set_control(seq, APC_SOLID_100, masks[oldindex], APC_MASKS_COLOR);
             }
 
+            // disable reset button
+            midi_set_control(seq, APC_SINGLE_MODE, 0x70, APC_SINGLE_OFF);
+
             kntxt->mask = NULL;
+            kntxt->maskframe = (frame_t *) &kntxt->maskreset;
+
             pthread_mutex_unlock(&kntxt->lock);
         }
 
@@ -985,6 +997,9 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
                 }
 
                 midi_set_control(seq, APC_PULSE_1_4, masks[i], APC_MASKS_COLOR);
+
+                // enable reset button
+                midi_set_control(seq, APC_SINGLE_MODE, 0x70, APC_SINGLE_ON);
 
                 logger("[+] loading mask %d: %s", i + 1, kntxt->masks[i]);
                 kntxt->mask = kntxt->masks[i];
