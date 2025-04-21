@@ -20,6 +20,7 @@
 #include <png.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <hiredis/hiredis.h>
 
 #define LOGGER_SIZE 32
 #define SEGMENTS    24
@@ -84,9 +85,9 @@
 //
 typedef union pixel_t {
     struct {
-	    uint8_t r;
-	    uint8_t g;
-	    uint8_t b;
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
         uint8_t a;
     };
 
@@ -125,6 +126,10 @@ typedef struct controller_stats_t {
     uint64_t fps;
     uint64_t time_last_frame;
     uint64_t time_current;
+    // uint64_t psu_current:
+    // uint64_t psu_voltage;
+    // uint16_t ac_voltage:
+    //
 
 } controller_stats_t;
 
@@ -174,7 +179,7 @@ typedef struct kntxt_t {
     char *controladdr;
 
     // flags to monitor interface presence
-    uint8_t interface;
+    uint8_t interface; // not found, found, lost
 
     // master thread locking (FIXME)
     pthread_mutex_t lock;
@@ -481,21 +486,21 @@ void *thread_presets(void *extra) {
     logger("[+] presets: initializing presets, loading default one");
 
     /*
-    struct timespec ts = {
-        .tv_sec = 1,
-        .tv_nsec = 100000,
-    };
-    */
+       struct timespec ts = {
+       .tv_sec = 1,
+       .tv_nsec = 100000,
+       };
+       */
 
     while(kntxt->keepgoing) {
         /*
-        if((retval = pthread_cond_timedwait(&kntxt->cond_presets, &kntxt->mutcond_presets, &ts)) != 0) {
-            if(retval == ETIMEDOUT) {
-                logger("timeout");
-                continue;
-            }
-        }
-        */
+           if((retval = pthread_cond_timedwait(&kntxt->cond_presets, &kntxt->mutcond_presets, &ts)) != 0) {
+           if(retval == ETIMEDOUT) {
+           logger("timeout");
+           continue;
+           }
+           }
+           */
 
         pthread_mutex_lock(&kntxt->mutcond_presets);
         pthread_cond_wait(&kntxt->cond_presets, &kntxt->mutcond_presets); // FIXME
@@ -539,19 +544,19 @@ void *thread_masks(void *extra) {
     logger("[+] masks: initializing masks");
 
     /*
-    struct timespec ts = {
-        .tv_sec = 0,
-        .tv_nsec = 100000,
-    };
-    */
+       struct timespec ts = {
+       .tv_sec = 0,
+       .tv_nsec = 100000,
+       };
+       */
 
     while(kntxt->keepgoing) {
         /*
-        if((retval = pthread_cond_timedwait(&kntxt->cond_masks, &kntxt->mutcond_masks, &ts)) != 0) {
-            if(retval == ETIMEDOUT)
-                continue;
-        }
-        */
+           if((retval = pthread_cond_timedwait(&kntxt->cond_masks, &kntxt->mutcond_masks, &ts)) != 0) {
+           if(retval == ETIMEDOUT)
+           continue;
+           }
+           */
 
         pthread_mutex_lock(&kntxt->mutcond_masks);
         pthread_cond_wait(&kntxt->cond_masks, &kntxt->mutcond_masks); // FIXME
@@ -616,7 +621,7 @@ int netsend_transmit_frame(uint8_t *bitmap, char *target) {
 
     // sending bitmap
     if(sendto(sockfd, bitmap, BITMAPSIZE, 0, (struct sockaddr *) &serveraddr, serverlen) < 0)
-      diep("sendto");
+        diep("sendto");
 
     close(sockfd);
 
@@ -695,17 +700,18 @@ void netsend_pixels_transform(kntxt_t *kntxt, pixel_t *monitor, pixel_t *preview
         }
     }
 
-    int barperseg[2][7] = {
-        {0, 8, -1, -1, -1, -1, -1},
-        {1, 2,  3,  9, 10, 11, -1},
+    int barperseg[3][8] = {
+        {0,  1,  2,  3,  4,  5,  6,  7},
+        {8,  9,  10, 11, 12, 13, 14, 15},
+        {16, 17, 18, 19, 20, 21, 22, 23},
     };
 
-    for(int segment = 0; segment < 2; segment++) {
+    for(int segment = 0; segment < 3; segment++) {
         // is segment faded
         if(segments[segment] == 255)
             continue;
 
-        for(int xbar = 0; xbar < 7; xbar++) {
+        for(int xbar = 0; xbar < 8; xbar++) {
             if(barperseg[segment][xbar] < 0)
                 break;
 
@@ -938,6 +944,8 @@ int midi_handle_event(const snd_seq_event_t *ev, kntxt_t *kntxt, snd_seq_t *seq)
     //
     // faders: 48 -> 56
 
+    // logger("midi: event type: %d", ev->type);
+
     // FIXME: use local copy, not main object
     uint8_t *presets = kntxt->midi.presets;
     uint8_t *masks = kntxt->midi.masks;
@@ -1129,11 +1137,12 @@ void *midi_no_interface(kntxt_t *kntxt) {
     return NULL;
 }
 
-void *thread_midi(void *extra) {
-    kntxt_t *kntxt = (kntxt_t *) extra;
+snd_seq_t *midi_initialize_interface(kntxt_t *kntxt) {
     snd_seq_t *seq;
     snd_seq_addr_t *ports;
     int err;
+
+    // prepare device link
 
     // connect to midi controller
     if((err = snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0)) < 0)
@@ -1154,26 +1163,25 @@ void *thread_midi(void *extra) {
     // hardcoded keyboard port
     if((err = snd_seq_parse_address(seq, &ports[0], "APC mini mk2")) < 0) {
         logger("[-] midi: parse address: %s", snd_strerror(err));
-        return midi_no_interface(kntxt);
+        snd_seq_close(seq);
+        // return midi_no_interface(kntxt);
+        return NULL;
     }
 
     if((err = snd_seq_connect_from(seq, 0, ports[0].client, ports[0].port)) < 0) {
         logger("[-] midi: connect from: %s", snd_strerror(err));
-        return midi_no_interface(kntxt);
+        snd_seq_close(seq);
+        // return midi_no_interface(kntxt);
+        return NULL;
     }
 
     if((err = snd_seq_connect_to(seq, 0, ports[0].client, ports[0].port)) < 0) {
         logger("[-] midi: connect to: %s", snd_strerror(err));
     }
 
-    struct pollfd *pfds;
-    int npfds;
-
-    npfds = snd_seq_poll_descriptors_count(seq, POLLIN);
-    pfds = calloc(sizeof(*pfds), npfds);
-
     kntxt->interface = 1;
-    logger("[+] midi: interface connected, initializing");
+
+    // prepare device light states
 
     //
     // presets
@@ -1233,16 +1241,55 @@ void *thread_midi(void *extra) {
 
     logger("[+] midi: interface initialized");
 
+    return seq;
+
+}
+
+void *thread_midi(void *extra) {
+    kntxt_t *kntxt = (kntxt_t *) extra;
+    snd_seq_t *seq = NULL;
+    struct pollfd *pfds;
+    int err;
+    int npfds;
+
+    npfds = snd_seq_poll_descriptors_count(seq, POLLIN);
+    pfds = calloc(sizeof(*pfds), npfds);
+
     // polling events
     while(kntxt->keepgoing) {
         snd_seq_event_t *event;
+
+        if(kntxt->interface != 1) {
+            if(!(seq = midi_initialize_interface(kntxt))) {
+                usleep(20000);
+                continue;
+            }
+        }
 
         snd_seq_poll_descriptors(seq, pfds, npfds, POLLIN);
         if(poll(pfds, npfds, 100) < 0)
             diep("poll");
 
+        unsigned short evid;
+        if(snd_seq_poll_descriptors_revents(seq, pfds, npfds, &evid) == 0) {
+            // logger(">> processing %d", evid);
+        }
+
+        int pending = snd_seq_event_input_pending(seq, 1);
+        if(pending == 0)
+            continue;
+
         if((err = snd_seq_event_input(seq, &event)) > 0) {
             if(event) {
+                if(event->type == SND_SEQ_EVENT_PORT_UNSUBSCRIBED) {
+                    logger("[-] midi: interface disconnected, closing session");
+
+                    snd_seq_close(seq);
+                    kntxt->interface = 2;
+
+                    continue;
+                }
+
                 midi_handle_event(event, kntxt, seq);
             }
         }
@@ -1324,7 +1371,7 @@ void console_panes_refresh() {
     console_pane_draw("Pixel Monitor", 24, 1, 0);
     console_pane_draw("MIDI Channels", 10, 27, 0);
     console_pane_draw("Global Statistics", 8, 39, 0);
-    console_pane_draw("System Logger", 6, 49, 0);
+    console_pane_draw("System Logger", 15, 49, 0);
 
     console_pane_draw("Pixel Preview", 24, 1, 127);
     console_pane_draw("Animation Presets", 10, 27, 127);
@@ -1420,7 +1467,21 @@ void *thread_console(void *extra) {
         printf("Speed : % 4d [%.1f fps] %-10s", kntxt->speed, speedfps, "");
 
         console_cursor_move(upper + 5, 2);
-        printf("Interface: %s %-10s", kntxt->interface ? COK(" online ") : CBAD(" offline "), "");
+        if(kntxt->interface == 0) {
+            printf("Interface: %s %-10s", CBAD(" offline "), "");
+
+        } else if(kntxt->interface == 1) {
+            printf("Interface: %s %-10s", COK(" online "), "");
+
+        } else if(kntxt->interface == 2) {
+            printf("Interface: %s %-10s", CBAD("  lost  "), "");
+
+        } else {
+            printf("Interface: %s %-10s", CWAIT(" unknown "), "");
+
+        }
+
+        // printf("Interface: %s %-10s", kntxt->interface ? COK(" online ") : CBAD(" offline "), "");
 
         console_cursor_move(upper + 7, 2);
         printf("Preset: %-40s", kntxt->preset);
@@ -1503,7 +1564,7 @@ void *thread_console(void *extra) {
         // console_border_top("Logger");
         pthread_mutex_lock(&logs->lock);
 
-        int show = 6;
+        int show = 15;
         int index = logs->nextid - show;
         upper = 50;
 
@@ -1601,6 +1662,7 @@ int main(int argc, char *argv[]) {
     mainctx.presets[i++] = "linear-solid.png";
 
     mainctx.presets[i++] = "rainbow.png";
+    mainctx.presets[i++] = "testku.png";
     mainctx.presets[22] = "full-black.png";
     mainctx.presets[23] = "full.png";
 
@@ -1608,7 +1670,7 @@ int main(int argc, char *argv[]) {
 
     i = 0;
     mainctx.masks[i++] = "mask-diagonal.png";
-    mainctx.masks[i++] = "mask-hole.png";
+    mainctx.masks[i++] = "mask-holes.png";
     mainctx.masks[i++] = "mask-thunder.png";
     mainctx.masks[i++] = "mask-thunder-1.png";
     mainctx.masks[i++] = "mask-thunder-2.png";
@@ -1618,6 +1680,8 @@ int main(int argc, char *argv[]) {
     mainctx.masks[i++] = "mask-thunder-segment-smooth-2.png";
     mainctx.masks[i++] = "mask-thunder-pattern-1.png";
     mainctx.masks[i++] = "mask-thunder-pattern-2.png";
+    mainctx.masks[i++] = "mask-segments-roll.png";
+    mainctx.masks[i++] = "mask-smooth-cross.png";
 
     // loading default frame
     mainctx.frame = frame_loadfile(mainctx.preset);
