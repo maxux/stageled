@@ -125,11 +125,24 @@ typedef struct controller_stats_t {
     uint64_t frames;
     uint64_t fps;
     uint64_t time_last_frame;
+
     uint64_t time_current;
-    // uint64_t psu_current:
-    // uint64_t psu_voltage;
-    // uint16_t ac_voltage:
-    //
+
+    uint16_t main_ac_voltage;
+
+    uint16_t main_core_temperature;
+    uint16_t mon_core_temperature;
+    uint16_t ext_power_temperature;
+    uint16_t ext_compute_temperature;
+
+    uint16_t psu0_volt;
+    uint16_t psu0_amps;
+    uint16_t psu1_volt;
+    uint16_t psu1_amps;
+    uint16_t psu2_volt;
+    uint16_t psu2_amps;
+
+    uint16_t padding;
 
 } controller_stats_t;
 
@@ -1544,6 +1557,49 @@ void *thread_console(void *extra) {
 
         free(sessup);
         free(ctrlup);
+
+        // FIXME: stop repeating yourself
+        console_cursor_move(upper + 0, 80);
+
+        float psuv = controller->psu0_volt / 100.0;
+        float psua = controller->psu0_amps / 100.0;
+        int psuw = psuv * psua;
+
+        printf("| PSU 1: % 4.1f v - % 4.2f A - % 4d w", psuv, psua, psuw);
+
+        console_cursor_move(upper + 1, 80);
+
+        psuv = controller->psu1_volt / 100.0;
+        psua = controller->psu1_amps / 100.0;
+        psuw = psuv * psua;
+
+        printf("| PSU 2: % 4.1f v - % 4.2f A - % 4d w", psuv, psua, psuw);
+
+        console_cursor_move(upper + 2, 80);
+
+        psuv = controller->psu2_volt / 100.0;
+        psua = controller->psu2_amps / 100.0;
+        psuw = psuv * psua;
+
+        printf("| PSU 3: % 4.1f v - % 4.2f A - % 4d w", psuv, psua, psuw);
+
+        console_cursor_move(upper + 3, 80);
+        printf("| Main : % 4.1f v", controller->main_ac_voltage / 100.0);
+
+        console_cursor_move(upper + 4, 80);
+        printf("| ");
+
+        console_cursor_move(upper + 5, 80);
+        printf("| Core : % 4.1f°C - % 4.1f°C", controller->main_core_temperature / 100.0, controller->mon_core_temperature / 100.0);
+
+        console_cursor_move(upper + 6, 80);
+        printf("| Power: % 4.1f°C", controller->ext_power_temperature / 100.0);
+
+        console_cursor_move(upper + 7, 80);
+        printf("| Ctrls: % 4.1f°C", controller->ext_compute_temperature / 100.0);
+
+
+
 
         // we are done with main context
         pthread_mutex_unlock(&kntxt->lock);
